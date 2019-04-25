@@ -12,9 +12,26 @@
 #include "cairo.h"
 #include "log.h"
 #include "pool-buffer.h"
-#include "util.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
+
+static uint32_t parse_color(const char *color) {
+	if (color[0] == '#') {
+		++color;
+	}
+
+	int len = strlen(color);
+	if (len != 6 && len != 8) {
+		swaybg_log(LOG_DEBUG, "Invalid color %s, defaulting to 0xFFFFFFFF",
+				color);
+		return 0xFFFFFFFF;
+	}
+	uint32_t res = (uint32_t)strtoul(color, NULL, 16);
+	if (strlen(color) == 6) {
+		res = (res << 8) | 0xFF;
+	}
+	return res;
+}
 
 struct swaybg_state {
 	struct wl_display *display;
@@ -59,7 +76,7 @@ struct swaybg_output {
 bool is_valid_color(const char *color) {
 	int len = strlen(color);
 	if (len != 7 || color[0] != '#') {
-		sway_log(SWAY_ERROR, "%s is not a valid color for swaybg. "
+		swaybg_log(LOG_ERROR, "%s is not a valid color for swaybg. "
 				"Color should be specified as #rrggbb (no alpha).", color);
 		return false;
 	}
@@ -147,7 +164,7 @@ static void layer_surface_configure(void *data,
 static void layer_surface_closed(void *data,
 		struct zwlr_layer_surface_v1 *surface) {
 	struct swaybg_output *output = data;
-	sway_log(SWAY_DEBUG, "Destroying output %s (%s)",
+	swaybg_log(LOG_DEBUG, "Destroying output %s (%s)",
 			output->name, output->identifier);
 	destroy_swaybg_output(output);
 }
@@ -233,7 +250,7 @@ static void xdg_output_handle_description(void *data,
 		size_t length = paren - description;
 		output->identifier = malloc(length);
 		if (!output->identifier) {
-			sway_log(SWAY_ERROR, "Failed to allocate output identifier");
+			swaybg_log(LOG_ERROR, "Failed to allocate output identifier");
 			return;
 		}
 		strncpy(output->identifier, description, length);
@@ -275,11 +292,11 @@ static void xdg_output_handle_done(void *data,
 		struct zxdg_output_v1 *xdg_output) {
 	struct swaybg_output *output = data;
 	if (!output->config) {
-		sway_log(SWAY_DEBUG, "Could not find config for output %s (%s)",
+		swaybg_log(LOG_DEBUG, "Could not find config for output %s (%s)",
 				output->name, output->identifier);
 		destroy_swaybg_output(output);
 	} else if (!output->layer_surface) {
-		sway_log(SWAY_DEBUG, "Found config %s for output %s (%s)",
+		swaybg_log(LOG_DEBUG, "Found config %s for output %s (%s)",
 				output->config->output, output->name, output->identifier);
 		create_layer_surface(output);
 	}
@@ -331,7 +348,7 @@ static void handle_global_remove(void *data, struct wl_registry *registry,
 	struct swaybg_output *output, *tmp;
 	wl_list_for_each_safe(output, tmp, &state->outputs, link) {
 		if (output->wl_name == name) {
-			sway_log(SWAY_DEBUG, "Destroying output %s (%s)",
+			swaybg_log(LOG_DEBUG, "Destroying output %s (%s)",
 					output->name, output->identifier);
 			destroy_swaybg_output(output);
 			break;
@@ -409,7 +426,7 @@ static void parse_command_line(int argc, char **argv,
 				goto no_output;
 			}
 			if (!is_valid_color(optarg)) {
-				sway_log(SWAY_ERROR, "Invalid color: %s", optarg);
+				swaybg_log(LOG_ERROR, "Invalid color: %s", optarg);
 				continue;
 			}
 			config->color = parse_color(optarg);
@@ -421,7 +438,7 @@ static void parse_command_line(int argc, char **argv,
 			free(config->image);
 			config->image = load_background_image(optarg);
 			if (!config->image) {
-				sway_log(SWAY_ERROR, "Failed to load image: %s", optarg);
+				swaybg_log(LOG_ERROR, "Failed to load image: %s", optarg);
 			}
 			break;
 		case 'm':  // mode
@@ -430,7 +447,7 @@ static void parse_command_line(int argc, char **argv,
 			}
 			config->mode = parse_background_mode(optarg);
 			if (config->mode == BACKGROUND_MODE_INVALID) {
-				sway_log(SWAY_ERROR, "Invalid mode: %s", optarg);
+				swaybg_log(LOG_ERROR, "Invalid mode: %s", optarg);
 			}
 			break;
 		case 'o':  // output
@@ -444,7 +461,7 @@ static void parse_command_line(int argc, char **argv,
 			wl_list_init(&config->link);  // init for safe removal
 			break;
 		case 'v':  // version
-			fprintf(stdout, "swaybg version " SWAY_VERSION "\n");
+			fprintf(stdout, "swaybg version " SWAYBG_VERSION "\n");
 			exit(EXIT_SUCCESS);
 			break;
 		default:
@@ -490,7 +507,7 @@ no_output:
 }
 
 int main(int argc, char **argv) {
-	sway_log_init(SWAY_DEBUG, NULL);
+	swaybg_log_init(LOG_DEBUG);
 
 	struct swaybg_state state = {0};
 	wl_list_init(&state.configs);
@@ -500,7 +517,7 @@ int main(int argc, char **argv) {
 
 	state.display = wl_display_connect(NULL);
 	if (!state.display) {
-		sway_log(SWAY_ERROR, "Unable to connect to the compositor. "
+		swaybg_log(LOG_ERROR, "Unable to connect to the compositor. "
 				"If your compositor is running, check or set the "
 				"WAYLAND_DISPLAY environment variable.");
 		return 1;
@@ -511,7 +528,7 @@ int main(int argc, char **argv) {
 	wl_display_roundtrip(state.display);
 	if (state.compositor == NULL || state.shm == NULL ||
 			state.layer_shell == NULL || state.xdg_output_manager == NULL) {
-		sway_log(SWAY_ERROR, "Missing a required Wayland interface");
+		swaybg_log(LOG_ERROR, "Missing a required Wayland interface");
 		return 1;
 	}
 
