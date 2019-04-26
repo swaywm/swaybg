@@ -411,7 +411,10 @@ static void parse_command_line(int argc, char **argv,
 		"Background Modes:\n"
 		"  stretch, fit, fill, center, tile, or solid_color\n";
 
-	struct swaybg_output_config *config = NULL;
+	struct swaybg_output_config *config = calloc(sizeof(struct swaybg_output_config), 1);
+	config->output = strdup("*");
+	config->mode = BACKGROUND_MODE_INVALID;
+	wl_list_init(&config->link); // init for safe removal
 
 	int c;
 	while (1) {
@@ -422,9 +425,6 @@ static void parse_command_line(int argc, char **argv,
 		}
 		switch (c) {
 		case 'c':  // color
-			if (!config) {
-				goto no_output;
-			}
 			if (!is_valid_color(optarg)) {
 				swaybg_log(LOG_ERROR, "Invalid color: %s", optarg);
 				continue;
@@ -432,9 +432,6 @@ static void parse_command_line(int argc, char **argv,
 			config->color = parse_color(optarg);
 			break;
 		case 'i':  // image
-			if (!config) {
-				goto no_output;
-			}
 			free(config->image);
 			config->image = load_background_image(optarg);
 			if (!config->image) {
@@ -442,9 +439,6 @@ static void parse_command_line(int argc, char **argv,
 			}
 			break;
 		case 'm':  // mode
-			if (!config) {
-				goto no_output;
-			}
 			config->mode = parse_background_mode(optarg);
 			if (config->mode == BACKGROUND_MODE_INVALID) {
 				swaybg_log(LOG_ERROR, "Invalid mode: %s", optarg);
@@ -500,10 +494,6 @@ static void parse_command_line(int argc, char **argv,
 				: BACKGROUND_MODE_SOLID_COLOR;
 		}
 	}
-	return;
-no_output:
-	fprintf(stderr, "Cannot operate on NULL output config\n");
-	exit(EXIT_FAILURE);
 }
 
 int main(int argc, char **argv) {
