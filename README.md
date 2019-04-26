@@ -32,7 +32,6 @@ Install dependencies:
 * meson \*
 * wayland
 * wayland-protocols \*
-* libxkbcommon
 * cairo
 * gdk-pixbuf2 \*\*
 * [scdoc](https://git.sr.ht/~sircmpwn/scdoc) (optional: man pages) \*
