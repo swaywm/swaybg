@@ -12,7 +12,7 @@ See the man page, `swaybg(1)`, for instructions on using swaybg.
 ## Release Signatures
 
 Releases are signed with [B22DA89A](http://pgp.mit.edu/pks/lookup?op=vindex&search=0x52CB6609B22DA89A)
-and published [on GitHub](https://github.com/swaywm/swaylock/releases). swaybg
+and published [on GitHub](https://github.com/swaywm/swaybg/releases). swaybg
 releases are managed independently of sway releases.
 
 ## Installation
