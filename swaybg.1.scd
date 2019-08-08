@@ -41,4 +41,4 @@ these options.
 
 Maintained by Drew DeVault <sir@cmpwn.com>, who is assisted by other open
 source contributors. For more information about swaybg development, see
-https://github.com/swaywm/sway.
+https://github.com/swaywm/swaybg.
