@@ -108,7 +108,7 @@ sources = [
 	'cairo.c',
 	'log.c',
 	'main.c',
-	'dir.c',
+	'dir_sel.c',
 	'pool-buffer.c',
 ]
 

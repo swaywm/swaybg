@@ -11,6 +11,7 @@
 #include "background-image.h"
 #include "cairo.h"
 #include "log.h"
+#include "dir_sel.h"
 #include "pool-buffer.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
@@ -417,6 +418,8 @@ static void parse_command_line(int argc, char **argv,
 	wl_list_init(&config->link); // init for safe removal
 
 	int c;
+	char* selected_image=NULL;
+
 	while (1) {
 		int option_index = 0;
 		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
@@ -433,9 +436,20 @@ static void parse_command_line(int argc, char **argv,
 			break;
 		case 'i':  // image
 			free(config->image);
-			config->image = load_background_image(optarg);
-			if (!config->image) {
+
+			//Note: optarg can be a directory now.
+ 			read_file_or_dir(optarg, &selected_image);
+			if(selected_image == NULL)
+			{
 				swaybg_log(LOG_ERROR, "Failed to load image: %s", optarg);
+			}
+			else
+			{
+				config->image = load_background_image(selected_image);
+				if (!config->image) {
+					swaybg_log(LOG_ERROR, "Failed to load image: %s", selected_image);
+				}
+				free(selected_image);
 			}
 			break;
 		case 'm':  // mode

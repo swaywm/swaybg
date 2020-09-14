@@ -11,9 +11,9 @@
 
 #include <stdio.h>
 #include <sys/types.h>
-#include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -77,13 +77,15 @@ static int read_img_link_raw(const char * path, char** linkname)
 			}
 			else
 			{
-				char* bname=dirname(path);
+				char* pathdup=strdup(path);
+				char* bname=dirname(pathdup);
 				char* newname=malloc(strlen(bname)+strlen(ln)+2);
 				//printf("===== dirname=%s\n", bname);
 				strcpy(newname, bname);
 				strcat(newname, "/");
 				strcat(newname, ln);
 				free(ln);
+				free(pathdup);
 				*linkname=newname;
 				//printf("=====%s\n", *linkname);
 			}
