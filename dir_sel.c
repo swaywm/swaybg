@@ -43,7 +43,7 @@ static int read_img_link_raw(const char * path, char** linkname)
 
 		case S_IFLNK:  
 			iRet=2;
-			printf("symlink, size=%d\n", sb.st_size);                 
+			printf("symlink, size=%ld\n", sb.st_size);                 
 			ln=malloc(sb.st_size+1);
 			if (ln == NULL) 
 			{
@@ -283,7 +283,7 @@ int read_file_or_dir(const char *name, char **selected)
 			break;
 
 		case S_IFLNK:  
-			printf("symlink, size=%d\n", sb.st_size);                 
+			printf("symlink, size=%ld\n", sb.st_size);                 
 			iret=read_img_link(name, &linkname);
 
 			if(iret==0)
