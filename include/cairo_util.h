@@ -1,9 +1,9 @@
-#ifndef _SWAY_CAIRO_H
-#define _SWAY_CAIRO_H
+#ifndef _SWAY_CAIRO_UTIL_H
+#define _SWAY_CAIRO_UTIL_H
 
 #include "config.h"
 #include <stdint.h>
-#include <cairo/cairo.h>
+#include <cairo.h>
 #include <wayland-client.h>
 #if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
