@@ -1,6 +1,6 @@
 #include <stdint.h>
-#include <cairo/cairo.h>
-#include "cairo.h"
+#include <cairo.h>
+#include "cairo_util.h"
 #if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #endif

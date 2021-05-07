@@ -1,6 +1,6 @@
 #include <assert.h>
 #include "background-image.h"
-#include "cairo.h"
+#include "cairo_util.h"
 #include "log.h"
 
 enum background_mode parse_background_mode(const char *mode) {
