@@ -72,8 +72,6 @@ struct swaybg_output {
 
 	struct wl_surface *surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
-	struct pool_buffer buffers[2];
-	struct pool_buffer *current_buffer;
 
 	uint32_t width, height;
 	int32_t scale;
@@ -105,12 +103,13 @@ bool is_valid_color(const char *color) {
 static void render_frame(struct swaybg_output *output) {
 	int buffer_width = output->width * output->scale,
 		buffer_height = output->height * output->scale;
-	output->current_buffer = get_next_buffer(output->state->shm,
-			output->buffers, buffer_width, buffer_height);
-	if (!output->current_buffer) {
+	struct pool_buffer buffer;
+	if (!create_buffer(&buffer, output->state->shm,
+			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
 		return;
 	}
-	cairo_t *cairo = output->current_buffer->cairo;
+
+	cairo_t *cairo = buffer.cairo;
 	cairo_save(cairo);
 	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
 	cairo_paint(cairo);
@@ -130,9 +129,11 @@ static void render_frame(struct swaybg_output *output) {
 	}
 
 	wl_surface_set_buffer_scale(output->surface, output->scale);
-	wl_surface_attach(output->surface, output->current_buffer->buffer, 0, 0);
+	wl_surface_attach(output->surface, buffer.buffer, 0, 0);
 	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(output->surface);
+	// we will not reuse the buffer, so destroy it immediately
+	destroy_buffer(&buffer);
 }
 
 static void destroy_swaybg_image(struct swaybg_image *image) {
@@ -168,8 +169,6 @@ static void destroy_swaybg_output(struct swaybg_output *output) {
 	}
 	zxdg_output_v1_destroy(output->xdg_output);
 	wl_output_destroy(output->wl_output);
-	destroy_buffer(&output->buffers[0]);
-	destroy_buffer(&output->buffers[1]);
 	free(output->name);
 	free(output->identifier);
 	free(output);
