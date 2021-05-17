@@ -70,6 +70,9 @@ struct swaybg_output {
 	uint32_t width, height;
 	int32_t scale;
 
+	uint32_t configure_serial;
+	bool dirty, needs_ack;
+
 	struct wl_list link;
 };
 
@@ -157,8 +160,9 @@ static void layer_surface_configure(void *data,
 	struct swaybg_output *output = data;
 	output->width = width;
 	output->height = height;
-	zwlr_layer_surface_v1_ack_configure(surface, serial);
-	render_frame(output);
+	output->dirty = true;
+	output->configure_serial = serial;
+	output->needs_ack = true;
 }
 
 static void layer_surface_closed(void *data,
@@ -194,7 +198,7 @@ static void output_scale(void *data, struct wl_output *wl_output,
 	struct swaybg_output *output = data;
 	output->scale = scale;
 	if (output->state->run_display && output->width > 0 && output->height > 0) {
-		render_frame(output);
+		output->dirty = true;
 	}
 }
 
@@ -532,7 +536,18 @@ int main(int argc, char **argv) {
 
 	state.run_display = true;
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
-		// This space intentionally left blank
+		wl_list_for_each(output, &state.outputs, link) {
+			if (output->needs_ack) {
+				output->needs_ack = false;
+				zwlr_layer_surface_v1_ack_configure(
+						output->layer_surface,
+						output->configure_serial);
+			}
+			if (output->dirty) {
+				output->dirty = false;
+				render_frame(output);
+			}
+		}
 	}
 
 	struct swaybg_output *tmp_output;
