@@ -1,12 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <wayland-client.h>
 #include "background-image.h"
 #include "cairo_util.h"
@@ -437,10 +440,17 @@ static void parse_command_line(int argc, char **argv,
 			break;
 		case 'i':  // image
 			free(config->image);
-			config->image = load_background_image(optarg);
-			if (!config->image) {
-				swaybg_log(LOG_ERROR, "Failed to load image: %s", optarg);
+			int fd = open(optarg, O_RDONLY);
+			if (fd != -1) {
+				config->image = load_background_image(fd);
+				close(fd);
+				if (!config->image) {
+					swaybg_log(LOG_ERROR, "Failed to load image: %s", optarg);
+				}
+			} else {
+				swaybg_log(LOG_ERROR, "Failed to open image: %s", optarg);
 			}
+
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
