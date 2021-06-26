@@ -46,9 +46,9 @@ struct swaybg_state {
 };
 
 struct swaybg_image {
-	const char *path;
-	cairo_surface_t *surface;
 	struct wl_list link;
+	const char *path;
+	bool load_required;
 };
 
 struct swaybg_output_config {
@@ -100,7 +100,7 @@ bool is_valid_color(const char *color) {
 	return true;
 }
 
-static void render_frame(struct swaybg_output *output) {
+static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
 	int buffer_width = output->width * output->scale,
 		buffer_height = output->height * output->scale;
 	struct pool_buffer buffer;
@@ -122,8 +122,9 @@ static void render_frame(struct swaybg_output *output) {
 			cairo_set_source_u32(cairo, output->config->color);
 			cairo_paint(cairo);
 		}
-		if (output->config->image->surface) {
-			render_background_image(cairo, output->config->image->surface,
+
+		if (surface) {
+			render_background_image(cairo, surface,
 				output->config->mode, buffer_width, buffer_height);
 		}
 	}
@@ -139,9 +140,6 @@ static void render_frame(struct swaybg_output *output) {
 static void destroy_swaybg_image(struct swaybg_image *image) {
 	if (!image) {
 		return;
-	}
-	if (image->surface) {
-		cairo_surface_destroy(image->surface);
 	}
 	wl_list_remove(&image->link);
 	free(image);
@@ -546,13 +544,6 @@ int main(int argc, char **argv) {
 		config->image = image;
 	}
 
-	wl_list_for_each(image, &state.images, link) {
-		image->surface = load_background_image(image->path);
-		if (!image->surface) {
-			swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
-		}
-	}
-
 	state.display = wl_display_connect(NULL);
 	if (!state.display) {
 		swaybg_log(LOG_ERROR, "Unable to connect to the compositor. "
@@ -580,6 +571,7 @@ int main(int argc, char **argv) {
 
 	state.run_display = true;
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
+		// Send acks, and determine which images need to be loaded
 		wl_list_for_each(output, &state.outputs, link) {
 			if (output->needs_ack) {
 				output->needs_ack = false;
@@ -587,9 +579,40 @@ int main(int argc, char **argv) {
 						output->layer_surface,
 						output->configure_serial);
 			}
+
+			if (output->dirty && output->config->image) {
+				output->config->image->load_required = true;
+			}
+		}
+
+		// Load images, render associated frames, and unload
+		wl_list_for_each(image, &state.images, link) {
+			if (!image->load_required) {
+				continue;
+			}
+
+			cairo_surface_t *surface = load_background_image(image->path);
+			if (!surface) {
+				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
+				continue;
+			}
+
+			wl_list_for_each(output, &state.outputs, link) {
+				if (output->dirty && output->config->image == image) {
+					output->dirty = false;
+					render_frame(output, surface);
+				}
+			}
+
+			image->load_required = false;
+			cairo_surface_destroy(surface);
+		}
+
+		// Redraw outputs without associated image
+		wl_list_for_each(output, &state.outputs, link) {
 			if (output->dirty) {
 				output->dirty = false;
-				render_frame(output);
+				render_frame(output, NULL);
 			}
 		}
 	}
