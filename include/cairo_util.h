@@ -7,7 +7,6 @@
 #include <wayland-client.h>
 #if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <gio/gunixinputstream.h>
 #endif
 
 void cairo_set_source_u32(cairo_t *cairo, uint32_t color);

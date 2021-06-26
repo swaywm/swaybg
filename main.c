@@ -55,7 +55,7 @@ struct swaybg_image {
 	dev_t st_dev;
 	ino_t st_ino;
 	int reference_count;
-	bool load_required;
+	struct wl_list dirty_outputs; // struct swaybg_output::image_req_link
 };
 
 struct swaybg_output_config {
@@ -84,6 +84,8 @@ struct swaybg_output {
 
 	uint32_t configure_serial;
 	bool dirty, needs_ack;
+	struct wl_list image_req_link;
+	int image_render_width, image_render_height;
 
 	struct wl_list link;
 };
@@ -131,7 +133,8 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 
 		if (surface) {
 			render_background_image(cairo, surface,
-				output->config->mode, buffer_width, buffer_height);
+				output->config->mode, buffer_width, buffer_height,
+				output->image_render_width, output->image_render_height);
 		}
 	}
 
@@ -507,6 +510,7 @@ static void parse_command_line(int argc, char **argv,
 				image->st_dev = info.st_dev;
 				image->path = optarg;
 				image->reference_count = 1;
+				wl_list_init(&image->dirty_outputs);
 				wl_list_insert(&state->images, &image->link);
 			}
 
@@ -570,8 +574,71 @@ static void parse_command_line(int argc, char **argv,
 	}
 }
 
+static void size_chooser(void *data, int width, int height,
+		int *scale_width, int *scale_height) {
+	struct wl_list* output_list = data;
+	struct swaybg_output *output;
+	int max_needed_width = 0, max_needed_height = 0;
+	wl_list_for_each(output, output_list, image_req_link) {
+		switch (output->config->mode) {
+		case BACKGROUND_MODE_STRETCH:
+			output->image_render_width = output->width;
+			output->image_render_height = output->height;
+			break;
+		case BACKGROUND_MODE_FILL: {
+			bool window_is_wider = (int64_t)output->width * height
+				> (int64_t)output->height * width;
+			if (window_is_wider) {
+				output->image_render_width = output->width;
+				output->image_render_height =
+					(double)((int64_t)height * (int64_t)output->width) / width;
+			} else {
+				output->image_render_height = output->height;
+				output->image_render_width =
+					(double)((int64_t)width * (int64_t)output->height) / height;
+			}
+			break;
+		}
+		case BACKGROUND_MODE_FIT: {
+			bool window_is_wider = (int64_t)output->width * height
+				> (int64_t)output->height * width;
+			if (window_is_wider) {
+				output->image_render_height = output->height;
+				output->image_render_width =
+					(double)((int64_t)width * (int64_t)output->height) / height;
+			} else {
+				output->image_render_width = output->width;
+				output->image_render_height =
+					(double)((int64_t)height * (int64_t)output->width) / width;
+			}
+			break;
+		}
+		case BACKGROUND_MODE_CENTER:
+		case BACKGROUND_MODE_TILE:
+			output->image_render_width = width;
+			output->image_render_height = height;
+			break;
+		case BACKGROUND_MODE_SOLID_COLOR:
+		case BACKGROUND_MODE_INVALID:
+			assert(0);
+			break;
+		}
+
+		max_needed_width = output->image_render_width > max_needed_width ?
+			output->image_render_width : max_needed_width;
+		max_needed_height = output->image_render_height > max_needed_height ?
+			output->image_render_height : max_needed_height;
+	}
+
+	width = width > max_needed_width ? max_needed_width : width;
+	height = height > max_needed_height ? max_needed_height : height;
+	*scale_width = width;
+	*scale_height = height;
+}
+
 int main(int argc, char **argv) {
 	struct swaybg_image *image;
+	struct swaybg_output *tmp_output;
 
 	swaybg_log_init(LOG_DEBUG);
 
@@ -619,33 +686,33 @@ int main(int argc, char **argv) {
 			}
 
 			if (output->dirty && output->config->image) {
-				output->config->image->load_required = true;
+				wl_list_insert(&output->config->image->dirty_outputs,
+					&output->image_req_link);
 			}
 		}
 
 		// Load images, render associated frames, and unload
 		wl_list_for_each(image, &state.images, link) {
-			if (!image->load_required) {
+			if (wl_list_empty(&image->dirty_outputs)) {
 				continue;
 			}
 			if (lseek(image->fd, 0, SEEK_SET) == -1) {
 				swaybg_log(LOG_ERROR, "lseek failed for image from: %s", image->path);
 			}
 
-			cairo_surface_t *surface = load_background_image(image->fd);
+			cairo_surface_t *surface = load_background_image(image->fd,
+				&image->dirty_outputs, size_chooser);
 			if (!surface) {
 				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
 				continue;
 			}
 
-			wl_list_for_each(output, &state.outputs, link) {
-				if (output->dirty && output->config->image == image) {
-					output->dirty = false;
-					render_frame(output, surface);
-				}
+			wl_list_for_each_safe(output, tmp_output, &image->dirty_outputs, image_req_link) {
+				output->dirty = false;
+				render_frame(output, surface);
+				wl_list_remove(&output->image_req_link);
 			}
 
-			image->load_required = false;
 			cairo_surface_destroy(surface);
 		}
 
@@ -658,7 +725,6 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	struct swaybg_output *tmp_output;
 	wl_list_for_each_safe(output, tmp_output, &state.outputs, link) {
 		destroy_swaybg_output(output);
 	}
