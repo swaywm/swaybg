@@ -41,12 +41,20 @@ struct swaybg_state {
 	struct zxdg_output_manager_v1 *xdg_output_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
+	struct wl_list images;   // struct swaybg_image::link
 	bool run_display;
+};
+
+struct swaybg_image {
+	struct wl_list link;
+	const char *path;
+	bool load_required;
 };
 
 struct swaybg_output_config {
 	char *output;
-	cairo_surface_t *image;
+	const char *image_path;
+	struct swaybg_image *image;
 	enum background_mode mode;
 	uint32_t color;
 	struct wl_list link;
@@ -64,8 +72,6 @@ struct swaybg_output {
 
 	struct wl_surface *surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
-	struct pool_buffer buffers[2];
-	struct pool_buffer *current_buffer;
 
 	uint32_t width, height;
 	int32_t scale;
@@ -94,15 +100,16 @@ bool is_valid_color(const char *color) {
 	return true;
 }
 
-static void render_frame(struct swaybg_output *output) {
+static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
 	int buffer_width = output->width * output->scale,
 		buffer_height = output->height * output->scale;
-	output->current_buffer = get_next_buffer(output->state->shm,
-			output->buffers, buffer_width, buffer_height);
-	if (!output->current_buffer) {
+	struct pool_buffer buffer;
+	if (!create_buffer(&buffer, output->state->shm,
+			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
 		return;
 	}
-	cairo_t *cairo = output->current_buffer->cairo;
+
+	cairo_t *cairo = buffer.cairo;
 	cairo_save(cairo);
 	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
 	cairo_paint(cairo);
@@ -115,14 +122,27 @@ static void render_frame(struct swaybg_output *output) {
 			cairo_set_source_u32(cairo, output->config->color);
 			cairo_paint(cairo);
 		}
-		render_background_image(cairo, output->config->image,
+
+		if (surface) {
+			render_background_image(cairo, surface,
 				output->config->mode, buffer_width, buffer_height);
+		}
 	}
 
 	wl_surface_set_buffer_scale(output->surface, output->scale);
-	wl_surface_attach(output->surface, output->current_buffer->buffer, 0, 0);
+	wl_surface_attach(output->surface, buffer.buffer, 0, 0);
 	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(output->surface);
+	// we will not reuse the buffer, so destroy it immediately
+	destroy_buffer(&buffer);
+}
+
+static void destroy_swaybg_image(struct swaybg_image *image) {
+	if (!image) {
+		return;
+	}
+	wl_list_remove(&image->link);
+	free(image);
 }
 
 static void destroy_swaybg_output_config(struct swaybg_output_config *config) {
@@ -147,8 +167,6 @@ static void destroy_swaybg_output(struct swaybg_output *output) {
 	}
 	zxdg_output_v1_destroy(output->xdg_output);
 	wl_output_destroy(output->wl_output);
-	destroy_buffer(&output->buffers[0]);
-	destroy_buffer(&output->buffers[1]);
 	free(output->name);
 	free(output->identifier);
 	free(output);
@@ -371,10 +389,8 @@ static bool store_swaybg_output_config(struct swaybg_state *state,
 	wl_list_for_each(oc, &state->configs, link) {
 		if (strcmp(config->output, oc->output) == 0) {
 			// Merge on top
-			if (config->image) {
-				free(oc->image);
-				oc->image = config->image;
-				config->image = NULL;
+			if (config->image_path) {
+				oc->image_path = config->image_path;
 			}
 			if (config->color) {
 				oc->color = config->color;
@@ -436,11 +452,7 @@ static void parse_command_line(int argc, char **argv,
 			config->color = parse_color(optarg);
 			break;
 		case 'i':  // image
-			free(config->image);
-			config->image = load_background_image(optarg);
-			if (!config->image) {
-				swaybg_log(LOG_ERROR, "Failed to load image: %s", optarg);
-			}
+			config->image_path = optarg;
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
@@ -490,10 +502,10 @@ static void parse_command_line(int argc, char **argv,
 	config = NULL;
 	struct swaybg_output_config *tmp = NULL;
 	wl_list_for_each_safe(config, tmp, &state->configs, link) {
-		if (!config->image && !config->color) {
+		if (!config->image_path && !config->color) {
 			destroy_swaybg_output_config(config);
 		} else if (config->mode == BACKGROUND_MODE_INVALID) {
-			config->mode = config->image
+			config->mode = config->image_path
 				? BACKGROUND_MODE_STRETCH
 				: BACKGROUND_MODE_SOLID_COLOR;
 		}
@@ -506,8 +518,31 @@ int main(int argc, char **argv) {
 	struct swaybg_state state = {0};
 	wl_list_init(&state.configs);
 	wl_list_init(&state.outputs);
+	wl_list_init(&state.images);
 
 	parse_command_line(argc, argv, &state);
+
+	// Identify distinct image paths which will need to be loaded
+	struct swaybg_image *image;
+	struct swaybg_output_config *config;
+	wl_list_for_each(config, &state.configs, link) {
+		if (!config->image_path) {
+			continue;
+		}
+		wl_list_for_each(image, &state.images, link) {
+			if (strcmp(image->path, config->image_path) == 0) {
+				config->image = image;
+				break;
+			}
+		}
+		if (config->image) {
+			continue;
+		}
+		image = calloc(1, sizeof(struct swaybg_image));
+		image->path = config->image_path;
+		wl_list_insert(&state.images, &image->link);
+		config->image = image;
+	}
 
 	state.display = wl_display_connect(NULL);
 	if (!state.display) {
@@ -536,6 +571,7 @@ int main(int argc, char **argv) {
 
 	state.run_display = true;
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
+		// Send acks, and determine which images need to be loaded
 		wl_list_for_each(output, &state.outputs, link) {
 			if (output->needs_ack) {
 				output->needs_ack = false;
@@ -543,9 +579,40 @@ int main(int argc, char **argv) {
 						output->layer_surface,
 						output->configure_serial);
 			}
+
+			if (output->dirty && output->config->image) {
+				output->config->image->load_required = true;
+			}
+		}
+
+		// Load images, render associated frames, and unload
+		wl_list_for_each(image, &state.images, link) {
+			if (!image->load_required) {
+				continue;
+			}
+
+			cairo_surface_t *surface = load_background_image(image->path);
+			if (!surface) {
+				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
+				continue;
+			}
+
+			wl_list_for_each(output, &state.outputs, link) {
+				if (output->dirty && output->config->image == image) {
+					output->dirty = false;
+					render_frame(output, surface);
+				}
+			}
+
+			image->load_required = false;
+			cairo_surface_destroy(surface);
+		}
+
+		// Redraw outputs without associated image
+		wl_list_for_each(output, &state.outputs, link) {
 			if (output->dirty) {
 				output->dirty = false;
-				render_frame(output);
+				render_frame(output, NULL);
 			}
 		}
 	}
@@ -555,9 +622,14 @@ int main(int argc, char **argv) {
 		destroy_swaybg_output(output);
 	}
 
-	struct swaybg_output_config *config = NULL, *tmp_config = NULL;
+	struct swaybg_output_config *tmp_config = NULL;
 	wl_list_for_each_safe(config, tmp_config, &state.configs, link) {
 		destroy_swaybg_output_config(config);
+	}
+
+	struct swaybg_image *tmp_image;
+	wl_list_for_each_safe(image, tmp_image, &state.images, link) {
+		destroy_swaybg_image(image);
 	}
 
 	return 0;

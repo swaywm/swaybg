@@ -57,18 +57,8 @@ static int create_pool_file(size_t size, char **name) {
 	return fd;
 }
 
-static void buffer_release(void *data, struct wl_buffer *wl_buffer) {
-	struct pool_buffer *buffer = data;
-	buffer->busy = false;
-}
-
-static const struct wl_buffer_listener buffer_listener = {
-	.release = buffer_release
-};
-
-static struct pool_buffer *create_buffer(struct wl_shm *shm,
-		struct pool_buffer *buf, int32_t width, int32_t height,
-		uint32_t format) {
+bool create_buffer(struct pool_buffer *buf, struct wl_shm *shm,
+		int32_t width, int32_t height, uint32_t format) {
 	uint32_t stride = width * 4;
 	size_t size = stride * height;
 
@@ -86,15 +76,11 @@ static struct pool_buffer *create_buffer(struct wl_shm *shm,
 	fd = -1;
 
 	buf->size = size;
-	buf->width = width;
-	buf->height = height;
 	buf->data = data;
 	buf->surface = cairo_image_surface_create_for_data(data,
 			CAIRO_FORMAT_ARGB32, width, height, stride);
 	buf->cairo = cairo_create(buf->surface);
-
-	wl_buffer_add_listener(buf->buffer, &buffer_listener, buf);
-	return buf;
+	return true;
 }
 
 void destroy_buffer(struct pool_buffer *buffer) {
@@ -110,34 +96,4 @@ void destroy_buffer(struct pool_buffer *buffer) {
 	if (buffer->data) {
 		munmap(buffer->data, buffer->size);
 	}
-	memset(buffer, 0, sizeof(struct pool_buffer));
-}
-
-struct pool_buffer *get_next_buffer(struct wl_shm *shm,
-		struct pool_buffer pool[static 2], uint32_t width, uint32_t height) {
-	struct pool_buffer *buffer = NULL;
-
-	for (size_t i = 0; i < 2; ++i) {
-		if (pool[i].busy) {
-			continue;
-		}
-		buffer = &pool[i];
-	}
-
-	if (!buffer) {
-		return NULL;
-	}
-
-	if (buffer->width != width || buffer->height != height) {
-		destroy_buffer(buffer);
-	}
-
-	if (!buffer->buffer) {
-		if (!create_buffer(shm, buffer, width, height,
-					WL_SHM_FORMAT_ARGB8888)) {
-			return NULL;
-		}
-	}
-	buffer->busy = true;
-	return buffer;
 }
