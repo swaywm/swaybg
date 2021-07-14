@@ -41,12 +41,20 @@ struct swaybg_state {
 	struct zxdg_output_manager_v1 *xdg_output_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
+	struct wl_list images;   // struct swaybg_image::link
 	bool run_display;
+};
+
+struct swaybg_image {
+	const char *path;
+	cairo_surface_t *surface;
+	struct wl_list link;
 };
 
 struct swaybg_output_config {
 	char *output;
-	cairo_surface_t *image;
+	const char *image_path;
+	struct swaybg_image *image;
 	enum background_mode mode;
 	uint32_t color;
 	struct wl_list link;
@@ -115,14 +123,27 @@ static void render_frame(struct swaybg_output *output) {
 			cairo_set_source_u32(cairo, output->config->color);
 			cairo_paint(cairo);
 		}
-		render_background_image(cairo, output->config->image,
+		if (output->config->image->surface) {
+			render_background_image(cairo, output->config->image->surface,
 				output->config->mode, buffer_width, buffer_height);
+		}
 	}
 
 	wl_surface_set_buffer_scale(output->surface, output->scale);
 	wl_surface_attach(output->surface, output->current_buffer->buffer, 0, 0);
 	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(output->surface);
+}
+
+static void destroy_swaybg_image(struct swaybg_image *image) {
+	if (!image) {
+		return;
+	}
+	if (image->surface) {
+		cairo_surface_destroy(image->surface);
+	}
+	wl_list_remove(&image->link);
+	free(image);
 }
 
 static void destroy_swaybg_output_config(struct swaybg_output_config *config) {
@@ -371,10 +392,8 @@ static bool store_swaybg_output_config(struct swaybg_state *state,
 	wl_list_for_each(oc, &state->configs, link) {
 		if (strcmp(config->output, oc->output) == 0) {
 			// Merge on top
-			if (config->image) {
-				free(oc->image);
-				oc->image = config->image;
-				config->image = NULL;
+			if (config->image_path) {
+				oc->image_path = config->image_path;
 			}
 			if (config->color) {
 				oc->color = config->color;
@@ -436,11 +455,7 @@ static void parse_command_line(int argc, char **argv,
 			config->color = parse_color(optarg);
 			break;
 		case 'i':  // image
-			free(config->image);
-			config->image = load_background_image(optarg);
-			if (!config->image) {
-				swaybg_log(LOG_ERROR, "Failed to load image: %s", optarg);
-			}
+			config->image_path = optarg;
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
@@ -490,10 +505,10 @@ static void parse_command_line(int argc, char **argv,
 	config = NULL;
 	struct swaybg_output_config *tmp = NULL;
 	wl_list_for_each_safe(config, tmp, &state->configs, link) {
-		if (!config->image && !config->color) {
+		if (!config->image_path && !config->color) {
 			destroy_swaybg_output_config(config);
 		} else if (config->mode == BACKGROUND_MODE_INVALID) {
-			config->mode = config->image
+			config->mode = config->image_path
 				? BACKGROUND_MODE_STRETCH
 				: BACKGROUND_MODE_SOLID_COLOR;
 		}
@@ -506,8 +521,38 @@ int main(int argc, char **argv) {
 	struct swaybg_state state = {0};
 	wl_list_init(&state.configs);
 	wl_list_init(&state.outputs);
+	wl_list_init(&state.images);
 
 	parse_command_line(argc, argv, &state);
+
+	// Identify distinct image paths which will need to be loaded
+	struct swaybg_image *image;
+	struct swaybg_output_config *config;
+	wl_list_for_each(config, &state.configs, link) {
+		if (!config->image_path) {
+			continue;
+		}
+		wl_list_for_each(image, &state.images, link) {
+			if (strcmp(image->path, config->image_path) == 0) {
+				config->image = image;
+				break;
+			}
+		}
+		if (config->image) {
+			continue;
+		}
+		image = calloc(1, sizeof(struct swaybg_image));
+		image->path = config->image_path;
+		wl_list_insert(&state.images, &image->link);
+		config->image = image;
+	}
+
+	wl_list_for_each(image, &state.images, link) {
+		image->surface = load_background_image(image->path);
+		if (!image->surface) {
+			swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
+		}
+	}
 
 	state.display = wl_display_connect(NULL);
 	if (!state.display) {
@@ -555,9 +600,14 @@ int main(int argc, char **argv) {
 		destroy_swaybg_output(output);
 	}
 
-	struct swaybg_output_config *config = NULL, *tmp_config = NULL;
+	struct swaybg_output_config *tmp_config = NULL;
 	wl_list_for_each_safe(config, tmp_config, &state.configs, link) {
 		destroy_swaybg_output_config(config);
+	}
+
+	struct swaybg_image *tmp_image;
+	wl_list_for_each_safe(image, tmp_image, &state.images, link) {
+		destroy_swaybg_image(image);
 	}
 
 	return 0;
