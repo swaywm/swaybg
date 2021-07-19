@@ -1,0 +1,17 @@
+image: alpine/edge
+packages:
+  - cairo-dev
+  - gdk-pixbuf-dev
+  - meson
+  - scdoc
+  - wayland-dev
+  - wayland-protocols
+sources:
+  - https://github.com/swaywm/swaybg
+tasks:
+  - setup: |
+      cd swaybg
+      meson build/ --fatal-meson-warnings -Dauto_features=enabled
+  - build: |
+      cd swaybg
+      ninja -C build/
