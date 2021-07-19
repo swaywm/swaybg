@@ -28,17 +28,17 @@ endif
 
 wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.14')
-wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91')
+wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
 cairo = dependency('cairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
 
-git = find_program('git', required: false)
-scdoc = find_program('scdoc', required: get_option('man-pages'))
+git = find_program('git', required: false, native: true)
+scdoc = find_program('scdoc', required: get_option('man-pages'), native: true)
 
 version = '"@0@"'.format(meson.project_version())
 if git.found()
-	git_commit_hash = run_command([git.path(), 'describe', '--always', '--tags'])
-	git_branch = run_command([git.path(), 'rev-parse', '--abbrev-ref', 'HEAD'])
+	git_commit_hash = run_command([git, 'describe', '--always', '--tags'])
+	git_branch = run_command([git, 'rev-parse', '--abbrev-ref', 'HEAD'])
 	if git_commit_hash.returncode() == 0 and git_branch.returncode() == 0
 		version = '"@0@ (" __DATE__ ", branch \'@1@\')"'.format(git_commit_hash.stdout().strip(), git_branch.stdout().strip())
 	endif
