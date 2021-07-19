@@ -35,7 +35,7 @@ Install dependencies:
 * cairo
 * gdk-pixbuf2 (optional: image formats other than PNG)
 * [scdoc](https://git.sr.ht/~sircmpwn/scdoc) (optional: man pages) \*
-* git \*
+* git (optional: version information) \*
 
 _\* Compile-time dep_
 
