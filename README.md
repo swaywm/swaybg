@@ -41,6 +41,6 @@ _\* Compile-time dep_
 
 Run these commands:
 
-    meson build
-    ninja -C build
-    sudo ninja -C build install
+    meson build/
+    ninja -C build/
+    sudo ninja -C build/ install
