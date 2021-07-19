@@ -28,12 +28,12 @@ endif
 
 wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.14')
+wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91')
 cairo = dependency('cairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
 
 git = find_program('git', required: false)
 scdoc = find_program('scdoc', required: get_option('man-pages'))
-wayland_scanner = find_program('wayland-scanner')
 
 version = '"@0@"'.format(meson.project_version())
 if git.found()
@@ -51,20 +51,16 @@ add_project_arguments([
 
 wl_protocol_dir = wayland_protos.get_pkgconfig_variable('pkgdatadir')
 
-if wayland_client.version().version_compare('>=1.14.91')
-	code_type = 'private-code'
-else
-	code_type = 'code'
-endif
+wayland_scanner_prog = find_program(wayland_scanner.get_pkgconfig_variable('wayland_scanner'))
 
 wayland_scanner_code = generator(
-	wayland_scanner,
+	wayland_scanner_prog,
 	output: '@BASENAME@-protocol.c',
-	arguments: [code_type, '@INPUT@', '@OUTPUT@'],
+	arguments: ['private-code', '@INPUT@', '@OUTPUT@'],
 )
 
 wayland_scanner_client = generator(
-	wayland_scanner,
+	wayland_scanner_prog,
 	output: '@BASENAME@-client-protocol.h',
 	arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
 )
