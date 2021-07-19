@@ -43,7 +43,11 @@ if git.found()
 		version = '"@0@ (" __DATE__ ", branch \'@1@\')"'.format(git_commit_hash.stdout().strip(), git_branch.stdout().strip())
 	endif
 endif
-add_project_arguments('-DSWAYBG_VERSION=@0@'.format(version), language: 'c')
+
+add_project_arguments([
+	'-DSWAYBG_VERSION=@0@'.format(version),
+	'-DHAVE_GDK_PIXBUF=@0@'.format(gdk_pixbuf.found().to_int()),
+], language: 'c')
 
 wl_protocol_dir = wayland_protos.get_pkgconfig_variable('pkgdatadir')
 
@@ -90,11 +94,6 @@ client_protos = declare_dependency(
 	link_with: lib_client_protos,
 	sources: client_protos_headers,
 )
-
-conf_data = configuration_data()
-conf_data.set10('HAVE_GDK_PIXBUF', gdk_pixbuf.found())
-
-subdir('include')
 
 dependencies = [
 	cairo,
