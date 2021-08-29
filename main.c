@@ -99,21 +99,22 @@ struct swaybg_output {
 // Create a wl_buffer with the specified dimensions and content
 static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 		cairo_surface_t *surface, uint32_t buffer_width, uint32_t buffer_height) {
+	uint32_t bg_color = output->config->color ? output->config->color : 0x000000ff;
+
 	if (buffer_width == 1 && buffer_height == 1 &&
 			output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
 			output->state->single_pixel_buffer_manager) {
 		// create and return single pixel buffer
-		uint8_t r8 = (output->config->color >> 24) & 0xFF;
-		uint8_t g8 = (output->config->color >> 16) & 0xFF;
-		uint8_t b8 = (output->config->color >> 8) & 0xFF;
-		uint8_t a8 = (output->config->color >> 0) & 0xFF;
+		uint8_t r8 = (bg_color >> 24) & 0xFF;
+		uint8_t g8 = (bg_color >> 16) & 0xFF;
+		uint8_t b8 = (bg_color >> 8) & 0xFF;
 		uint32_t f = 0xFFFFFFFF / 0xFF; // division result is an integer
 		uint32_t r32 = r8 * f;
 		uint32_t g32 = g8 * f;
 		uint32_t b32 = b8 * f;
-		uint32_t a32 = a8 * f;
 		return wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
-			output->state->single_pixel_buffer_manager, r32, g32, b32, a32);
+			output->state->single_pixel_buffer_manager,
+			r32, g32, b32, 0xFFFFFFFF);
 	}
 
 
@@ -124,23 +125,12 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 	}
 
 	cairo_t *cairo = buffer.cairo;
-	cairo_save(cairo);
-	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	cairo_set_source_u32(cairo, bg_color);
 	cairo_paint(cairo);
-	cairo_restore(cairo);
-	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR) {
-		cairo_set_source_u32(cairo, output->config->color);
-		cairo_paint(cairo);
-	} else {
-		if (output->config->color) {
-			cairo_set_source_u32(cairo, output->config->color);
-			cairo_paint(cairo);
-		}
 
-		if (surface) {
-			render_background_image(cairo, surface,
-				output->config->mode, buffer_width, buffer_height);
-		}
+	if (surface) {
+		render_background_image(cairo, surface,
+			output->config->mode, buffer_width, buffer_height);
 	}
 
 	// return wl_buffer for caller to use and destroy
