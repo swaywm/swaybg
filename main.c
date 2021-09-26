@@ -78,6 +78,7 @@ struct swaybg_output {
 
 	uint32_t configure_serial;
 	bool dirty, needs_ack;
+	int32_t committed_width, committed_height, committed_scale;
 
 	struct wl_list link;
 };
@@ -103,6 +104,19 @@ bool is_valid_color(const char *color) {
 static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
 	int buffer_width = output->width * output->scale,
 		buffer_height = output->height * output->scale;
+
+	// If the last committed buffer has the same size as this one would, do
+	// not render a new buffer, because it will be identical to the old one
+	if (output->committed_width == buffer_width &&
+			output->committed_height == buffer_height) {
+		if (output->committed_scale != output->scale) {
+			wl_surface_set_buffer_scale(output->surface, output->scale);
+			wl_surface_commit(output->surface);
+
+			output->committed_scale = output->scale;
+		}
+		return;
+	}
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
 			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
@@ -133,6 +147,11 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 	wl_surface_attach(output->surface, buffer.buffer, 0, 0);
 	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(output->surface);
+
+	output->committed_width = buffer_width;
+	output->committed_height = buffer_height;
+	output->committed_scale = output->scale;
+
 	// we will not reuse the buffer, so destroy it immediately
 	destroy_buffer(&buffer);
 }
@@ -580,7 +599,12 @@ int main(int argc, char **argv) {
 						output->configure_serial);
 			}
 
-			if (output->dirty && output->config->image) {
+			int buffer_width = output->width * output->scale,
+				buffer_height = output->height * output->scale;
+			bool buffer_change =
+				output->committed_height != buffer_height ||
+				output->committed_width != buffer_width;
+			if (output->dirty && output->config->image && buffer_change) {
 				output->config->image->load_required = true;
 			}
 		}
