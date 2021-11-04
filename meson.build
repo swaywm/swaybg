@@ -40,7 +40,8 @@ if git.found()
 	git_commit_hash = run_command([git, 'describe', '--always', '--tags'])
 	git_branch = run_command([git, 'rev-parse', '--abbrev-ref', 'HEAD'])
 	if git_commit_hash.returncode() == 0 and git_branch.returncode() == 0
-		version = '"@0@ (" __DATE__ ", branch \'@1@\')"'.format(git_commit_hash.stdout().strip(), git_branch.stdout().strip())
+		git_commit_date = run_command([git, 'log', '--pretty=format:%ad', '--max-count=1', '--date=short'])
+		version = '"@0@ (@1@, branch \'@2@\')"'.format(git_commit_hash.stdout().strip(), git_commit_date.stdout().strip(), git_branch.stdout().strip())
 	endif
 endif
 
