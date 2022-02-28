@@ -195,9 +195,10 @@ static void layer_surface_configure(void *data,
 		struct zwlr_layer_surface_v1 *surface,
 		uint32_t serial, uint32_t width, uint32_t height) {
 	struct swaybg_output *output = data;
+	bool changed = width != output->width || height != output->height;
 	output->width = width;
 	output->height = height;
-	output->dirty = true;
+	output->dirty |= changed;
 	output->configure_serial = serial;
 	output->needs_ack = true;
 }
@@ -233,9 +234,10 @@ static void output_done(void *data, struct wl_output *output) {
 static void output_scale(void *data, struct wl_output *wl_output,
 		int32_t scale) {
 	struct swaybg_output *output = data;
+	bool changed = scale != output->scale;
 	output->scale = scale;
 	if (output->state->run_display && output->width > 0 && output->height > 0) {
-		output->dirty = true;
+		output->dirty |= changed;
 	}
 }
 
