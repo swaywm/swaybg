@@ -37,8 +37,8 @@ scdoc = find_program('scdoc', required: get_option('man-pages'), native: true)
 
 version = '"@0@"'.format(meson.project_version())
 if git.found()
-	git_commit_hash = run_command([git, 'describe', '--always', '--tags'])
-	git_branch = run_command([git, 'rev-parse', '--abbrev-ref', 'HEAD'])
+	git_commit_hash = run_command([git, 'describe', '--always', '--tags'], check: false)
+	git_branch = run_command([git, 'rev-parse', '--abbrev-ref', 'HEAD'], check: false)
 	if git_commit_hash.returncode() == 0 and git_branch.returncode() == 0
 		version = '"@0@ (" __DATE__ ", branch \'@1@\')"'.format(git_commit_hash.stdout().strip(), git_branch.stdout().strip())
 	endif
