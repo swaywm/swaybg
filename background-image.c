@@ -108,6 +108,7 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		cairo_pattern_t *pattern = cairo_pattern_create_for_surface(image);
 		cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
 		cairo_set_source(cairo, pattern);
+		cairo_pattern_destroy(pattern);
 		break;
 	}
 	case BACKGROUND_MODE_SOLID_COLOR:
