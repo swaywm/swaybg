@@ -5,7 +5,6 @@ Wayland compositor which implements the following Wayland protocols:
 
 - wlr-layer-shell
 - xdg-output
-- xdg-shell
 
 See the man page, `swaybg(1)`, for instructions on using swaybg.
 
