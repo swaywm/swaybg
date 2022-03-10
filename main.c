@@ -13,7 +13,6 @@
 #include "log.h"
 #include "pool-buffer.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
-#include "xdg-output-unstable-v1-client-protocol.h"
 
 static uint32_t parse_color(const char *color) {
 	if (color[0] == '#') {
@@ -38,7 +37,6 @@ struct swaybg_state {
 	struct wl_compositor *compositor;
 	struct wl_shm *shm;
 	struct zwlr_layer_shell_v1 *layer_shell;
-	struct zxdg_output_manager_v1 *xdg_output_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
@@ -63,7 +61,6 @@ struct swaybg_output_config {
 struct swaybg_output {
 	uint32_t wl_name;
 	struct wl_output *wl_output;
-	struct zxdg_output_v1 *xdg_output;
 	char *name;
 	char *identifier;
 
@@ -184,7 +181,6 @@ static void destroy_swaybg_output(struct swaybg_output *output) {
 	if (output->surface != NULL) {
 		wl_surface_destroy(output->surface);
 	}
-	zxdg_output_v1_destroy(output->xdg_output);
 	wl_output_destroy(output->wl_output);
 	free(output->name);
 	free(output->identifier);
@@ -226,81 +222,6 @@ static void output_mode(void *data, struct wl_output *output, uint32_t flags,
 	// Who cares
 }
 
-static void output_done(void *data, struct wl_output *output) {
-	// Who cares
-}
-
-static void output_scale(void *data, struct wl_output *wl_output,
-		int32_t scale) {
-	struct swaybg_output *output = data;
-	output->scale = scale;
-	if (output->state->run_display && output->width > 0 && output->height > 0) {
-		output->dirty = true;
-	}
-}
-
-static const struct wl_output_listener output_listener = {
-	.geometry = output_geometry,
-	.mode = output_mode,
-	.done = output_done,
-	.scale = output_scale,
-};
-
-static void xdg_output_handle_logical_position(void *data,
-		struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y) {
-	// Who cares
-}
-
-static void xdg_output_handle_logical_size(void *data,
-		struct zxdg_output_v1 *xdg_output, int32_t width, int32_t height) {
-	// Who cares
-}
-
-static void find_config(struct swaybg_output *output, const char *name) {
-	struct swaybg_output_config *config = NULL;
-	wl_list_for_each(config, &output->state->configs, link) {
-		if (strcmp(config->output, name) == 0) {
-			output->config = config;
-			return;
-		} else if (!output->config && strcmp(config->output, "*") == 0) {
-			output->config = config;
-		}
-	}
-}
-
-static void xdg_output_handle_name(void *data,
-		struct zxdg_output_v1 *xdg_output, const char *name) {
-	struct swaybg_output *output = data;
-	output->name = strdup(name);
-
-	// If description was sent first, the config may already be populated. If
-	// there is an identifier config set, keep it.
-	if (!output->config || strcmp(output->config->output, "*") == 0) {
-		find_config(output, name);
-	}
-}
-
-static void xdg_output_handle_description(void *data,
-		struct zxdg_output_v1 *xdg_output, const char *description) {
-	struct swaybg_output *output = data;
-
-	// wlroots currently sets the description to `make model serial (name)`
-	// If this changes in the future, this will need to be modified.
-	char *paren = strrchr(description, '(');
-	if (paren) {
-		size_t length = paren - description;
-		output->identifier = malloc(length);
-		if (!output->identifier) {
-			swaybg_log(LOG_ERROR, "Failed to allocate output identifier");
-			return;
-		}
-		strncpy(output->identifier, description, length);
-		output->identifier[length - 1] = '\0';
-
-		find_config(output, output->identifier);
-	}
-}
-
 static void create_layer_surface(struct swaybg_output *output) {
 	output->surface = wl_compositor_create_surface(output->state->compositor);
 	assert(output->surface);
@@ -329,8 +250,7 @@ static void create_layer_surface(struct swaybg_output *output) {
 	wl_surface_commit(output->surface);
 }
 
-static void xdg_output_handle_done(void *data,
-		struct zxdg_output_v1 *xdg_output) {
+static void output_done(void *data, struct wl_output *wl_output) {
 	struct swaybg_output *output = data;
 	if (!output->config) {
 		swaybg_log(LOG_DEBUG, "Could not find config for output %s (%s)",
@@ -343,12 +263,67 @@ static void xdg_output_handle_done(void *data,
 	}
 }
 
-static const struct zxdg_output_v1_listener xdg_output_listener = {
-	.logical_position = xdg_output_handle_logical_position,
-	.logical_size = xdg_output_handle_logical_size,
-	.name = xdg_output_handle_name,
-	.description = xdg_output_handle_description,
-	.done = xdg_output_handle_done,
+static void output_scale(void *data, struct wl_output *wl_output,
+		int32_t scale) {
+	struct swaybg_output *output = data;
+	output->scale = scale;
+	if (output->state->run_display && output->width > 0 && output->height > 0) {
+		output->dirty = true;
+	}
+}
+
+static void find_config(struct swaybg_output *output, const char *name) {
+	struct swaybg_output_config *config = NULL;
+	wl_list_for_each(config, &output->state->configs, link) {
+		if (strcmp(config->output, name) == 0) {
+			output->config = config;
+			return;
+		} else if (!output->config && strcmp(config->output, "*") == 0) {
+			output->config = config;
+		}
+	}
+}
+
+static void output_name(void *data, struct wl_output *wl_output,
+		const char *name) {
+	struct swaybg_output *output = data;
+	output->name = strdup(name);
+
+	// If description was sent first, the config may already be populated. If
+	// there is an identifier config set, keep it.
+	if (!output->config || strcmp(output->config->output, "*") == 0) {
+		find_config(output, name);
+	}
+}
+
+static void output_description(void *data, struct wl_output *wl_output,
+		const char *description) {
+	struct swaybg_output *output = data;
+
+	// wlroots currently sets the description to `make model serial (name)`
+	// If this changes in the future, this will need to be modified.
+	char *paren = strrchr(description, '(');
+	if (paren) {
+		size_t length = paren - description;
+		output->identifier = malloc(length);
+		if (!output->identifier) {
+			swaybg_log(LOG_ERROR, "Failed to allocate output identifier");
+			return;
+		}
+		strncpy(output->identifier, description, length);
+		output->identifier[length - 1] = '\0';
+
+		find_config(output, output->identifier);
+	}
+}
+
+static const struct wl_output_listener output_listener = {
+	.geometry = output_geometry,
+	.mode = output_mode,
+	.done = output_done,
+	.scale = output_scale,
+	.name = output_name,
+	.description = output_description,
 };
 
 static void handle_global(void *data, struct wl_registry *registry,
@@ -364,22 +339,12 @@ static void handle_global(void *data, struct wl_registry *registry,
 		output->state = state;
 		output->wl_name = name;
 		output->wl_output =
-			wl_registry_bind(registry, name, &wl_output_interface, 3);
+			wl_registry_bind(registry, name, &wl_output_interface, 4);
 		wl_output_add_listener(output->wl_output, &output_listener, output);
 		wl_list_insert(&state->outputs, &output->link);
-
-		if (state->run_display) {
-			output->xdg_output = zxdg_output_manager_v1_get_xdg_output(
-				state->xdg_output_manager, output->wl_output);
-			zxdg_output_v1_add_listener(output->xdg_output,
-				&xdg_output_listener, output);
-		}
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		state->layer_shell =
 			wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
-	} else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
-		state->xdg_output_manager = wl_registry_bind(registry, name,
-			&zxdg_output_manager_v1_interface, 2);
 	}
 }
 
@@ -578,22 +543,15 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	if (state.compositor == NULL || state.shm == NULL ||
-			state.layer_shell == NULL || state.xdg_output_manager == NULL) {
+			state.layer_shell == NULL) {
 		swaybg_log(LOG_ERROR, "Missing a required Wayland interface");
 		return 1;
-	}
-
-	struct swaybg_output *output;
-	wl_list_for_each(output, &state.outputs, link) {
-		output->xdg_output = zxdg_output_manager_v1_get_xdg_output(
-			state.xdg_output_manager, output->wl_output);
-		zxdg_output_v1_add_listener(output->xdg_output,
-			&xdg_output_listener, output);
 	}
 
 	state.run_display = true;
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
 		// Send acks, and determine which images need to be loaded
+		struct swaybg_output *output;
 		wl_list_for_each(output, &state.outputs, link) {
 			if (output->needs_ack) {
 				output->needs_ack = false;
@@ -644,7 +602,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	struct swaybg_output *tmp_output;
+	struct swaybg_output *output, *tmp_output;
 	wl_list_for_each_safe(output, tmp_output, &state.outputs, link) {
 		destroy_swaybg_output(output);
 	}

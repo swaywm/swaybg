@@ -1,10 +1,8 @@
 # swaybg
 
-swaybg is a wallpaper utility for Wayland compositors. It is compatible with any
-Wayland compositor which implements the following Wayland protocols:
-
-- wlr-layer-shell
-- xdg-output
+swaybg is a wallpaper utility for Wayland compositors. It is compatible with
+any Wayland compositor which implements the wlr-layer-shell protocol and
+`wl_output` version 4.
 
 See the man page, `swaybg(1)`, for instructions on using swaybg.
 
