@@ -3,7 +3,7 @@ project(
 	'c',
 	version: '1.1.1',
 	license: 'MIT',
-	meson_version: '>=0.48.0',
+	meson_version: '>=0.49.0',
 	default_options: [
 		'c_std=c11',
 		'warning_level=2',
@@ -69,15 +69,14 @@ client_protos_src = []
 client_protos_headers = []
 
 client_protocols = [
-	[wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
-	[wl_protocol_dir, 'unstable/xdg-output/xdg-output-unstable-v1.xml'],
-	['wlr-layer-shell-unstable-v1.xml'],
+	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
+	wl_protocol_dir / 'unstable/xdg-output/xdg-output-unstable-v1.xml',
+	'wlr-layer-shell-unstable-v1.xml',
 ]
 
-foreach p : client_protocols
-	xml = join_paths(p)
-	client_protos_src += wayland_scanner_code.process(xml)
-	client_protos_headers += wayland_scanner_client.process(xml)
+foreach filename : client_protocols
+	client_protos_src += wayland_scanner_code.process(filename)
+	client_protos_headers += wayland_scanner_client.process(filename)
 endforeach
 
 lib_client_protos = static_library(
