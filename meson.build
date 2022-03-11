@@ -3,7 +3,7 @@ project(
 	'c',
 	version: '1.1.1',
 	license: 'MIT',
-	meson_version: '>=0.49.0',
+	meson_version: '>=0.59.0',
 	default_options: [
 		'c_std=c11',
 		'warning_level=2',
@@ -49,9 +49,9 @@ add_project_arguments([
 	'-DHAVE_GDK_PIXBUF=@0@'.format(gdk_pixbuf.found().to_int()),
 ], language: 'c')
 
-wl_protocol_dir = wayland_protos.get_pkgconfig_variable('pkgdatadir')
+wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 
-wayland_scanner_prog = find_program(wayland_scanner.get_pkgconfig_variable('wayland_scanner'))
+wayland_scanner_prog = find_program(wayland_scanner.get_variable('wayland_scanner'))
 
 wayland_scanner_code = generator(
 	wayland_scanner_prog,
@@ -115,7 +115,6 @@ executable('swaybg',
 )
 
 if scdoc.found()
-	sh = find_program('sh')
 	mandir = get_option('mandir')
 	man_files = [
 		'swaybg.1.scd',
@@ -129,9 +128,9 @@ if scdoc.found()
 			output,
 			input: filename,
 			output: output,
-			command: [
-				sh, '-c', '@0@ < @INPUT@ > @1@'.format(scdoc.path(), output)
-			],
+			command: scdoc,
+			feed: true,
+			capture: true,
 			install: true,
 			install_dir: '@0@/man@1@'.format(mandir, section)
 		)
