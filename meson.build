@@ -70,6 +70,8 @@ client_protos_headers = []
 
 client_protocols = [
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
+	wl_protocol_dir / 'stable/viewporter/viewporter.xml',
+	wl_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
 	'wlr-layer-shell-unstable-v1.xml',
 ]
 
