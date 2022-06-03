@@ -13,6 +13,8 @@
 #include "log.h"
 #include "pool-buffer.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "viewporter-client-protocol.h"
+#include "single-pixel-buffer-v1-client-protocol.h"
 
 static uint32_t parse_color(const char *color) {
 	if (color[0] == '#') {
@@ -37,6 +39,8 @@ struct swaybg_state {
 	struct wl_compositor *compositor;
 	struct wl_shm *shm;
 	struct zwlr_layer_shell_v1 *layer_shell;
+	struct wp_viewporter *viewporter;
+	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
@@ -114,6 +118,35 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		}
 		return;
 	}
+
+	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
+			output->state->viewporter &&
+			output->state->single_pixel_buffer_manager) {
+		uint8_t r8 = (output->config->color >> 24) & 0xFF;
+		uint8_t g8 = (output->config->color >> 16) & 0xFF;
+		uint8_t b8 = (output->config->color >> 8) & 0xFF;
+		uint8_t a8 = (output->config->color >> 0) & 0xFF;
+		uint32_t f = 0xFFFFFFFF / 0xFF; // division result is an integer
+		uint32_t r32 = r8 * f;
+		uint32_t g32 = g8 * f;
+		uint32_t b32 = b8 * f;
+		uint32_t a32 = a8 * f;
+		struct wl_buffer *buffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
+			output->state->single_pixel_buffer_manager, r32, g32, b32, a32);
+		wl_surface_attach(output->surface, buffer, 0, 0);
+		wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
+
+		struct wp_viewport *viewport = wp_viewporter_get_viewport(
+			output->state->viewporter, output->surface);
+		wp_viewport_set_destination(viewport, output->width, output->height);
+
+		wl_surface_commit(output->surface);
+
+		wp_viewport_destroy(viewport);
+		wl_buffer_destroy(buffer);
+		return;
+	}
+
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
 			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
@@ -345,6 +378,13 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		state->layer_shell =
 			wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
+	} else if (strcmp(interface, wp_viewporter_interface.name) == 0) {
+		state->viewporter = wl_registry_bind(registry, name,
+			&wp_viewporter_interface, 1);
+	} else if (strcmp(interface,
+			wp_single_pixel_buffer_manager_v1_interface.name) == 0) {
+		state->single_pixel_buffer_manager = wl_registry_bind(registry, name,
+			&wp_single_pixel_buffer_manager_v1_interface, 1);
 	}
 }
 
