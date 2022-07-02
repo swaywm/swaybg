@@ -16,7 +16,7 @@ these options.
 
 # OPTIONS
 
-*-c, --color* <rrggbb[aa]>
+*-c, --color* <#rrggbb>
 	Set the background color.
 
 *-h, --help*
