@@ -436,6 +436,7 @@ static void parse_command_line(int argc, char **argv,
 		{"color", required_argument, NULL, 'c'},
 		{"help", no_argument, NULL, 'h'},
 		{"image", required_argument, NULL, 'i'},
+		{"directory", no_argument, NULL, 'd'},
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
 		{"version", no_argument, NULL, 'v'},
@@ -448,6 +449,7 @@ static void parse_command_line(int argc, char **argv,
 		"  -c, --color            Set the background color.\n"
 		"  -h, --help             Show help message and quit.\n"
 		"  -i, --image            Set the image to display.\n"
+        "  -d, --directory        Set the directory to select a random image from\n"
 		"  -m, --mode             Set the mode to use for the image.\n"
 		"  -o, --output           Set the output to operate on or * for all.\n"
 		"  -v, --version          Show the version number and quit.\n"
@@ -463,7 +465,7 @@ static void parse_command_line(int argc, char **argv,
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:d:m:o:v", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -477,6 +479,10 @@ static void parse_command_line(int argc, char **argv,
 			break;
 		case 'i':  // image
 			config->image_path = optarg;
+			break;
+		case 'd':  // directory
+			printf("Option not implemented\n");
+			exit(0);
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
