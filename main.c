@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <getopt.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -430,6 +431,48 @@ static bool store_swaybg_output_config(struct swaybg_state *state,
 	return true;
 }
 
+static const char *select_file(const char *directory)
+{
+	DIR* dir = opendir(directory);
+	if (dir == NULL) {
+		swaybg_log(LOG_ERROR, "Failed to open directory: %s", optarg);
+		exit(EXIT_FAILURE);
+	}
+
+	struct dirent* direntp = readdir(dir);
+	uint16_t file_count = 0;
+	while (direntp != NULL) {
+		// TODO: Only read regular files
+		if (direntp->d_name[0] != '.') {
+			file_count++;
+		}
+		direntp = readdir(dir);
+	}
+	closedir(dir);
+
+	srand(time(NULL));
+	uint16_t rand_index = rand() % file_count;
+
+	dir = opendir(directory);
+	direntp = readdir(dir);
+	uint16_t count = 0;
+	while (direntp != NULL) {
+		// TODO: Only read regular files
+		if (direntp->d_name[0] != '.') {
+			if (count == rand_index) {
+				printf("%s\n", direntp->d_name);
+				// TODO: Fix returning memory from stack
+				return direntp->d_name;
+				break;
+			}
+			count++;
+		}
+		direntp = readdir(dir);
+	}
+	closedir(dir);
+	exit(EXIT_FAILURE);
+}
+
 static void parse_command_line(int argc, char **argv,
 		struct swaybg_state *state) {
 	static struct option long_options[] = {
@@ -449,7 +492,7 @@ static void parse_command_line(int argc, char **argv,
 		"  -c, --color            Set the background color.\n"
 		"  -h, --help             Show help message and quit.\n"
 		"  -i, --image            Set the image to display.\n"
-        "  -d, --directory        Set the directory to select a random image from\n"
+		"  -d, --directory        Set the directory to select a random image from\n"
 		"  -m, --mode             Set the mode to use for the image.\n"
 		"  -o, --output           Set the output to operate on or * for all.\n"
 		"  -v, --version          Show the version number and quit.\n"
@@ -481,8 +524,8 @@ static void parse_command_line(int argc, char **argv,
 			config->image_path = optarg;
 			break;
 		case 'd':  // directory
-			printf("Option not implemented\n");
-			exit(0);
+			// TODO: Long option is segfaulting
+			config->image_path = strcat(strcat(optarg, "/"), select_file(optarg));
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
