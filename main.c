@@ -1,7 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <ctype.h>
-#define __USE_MISC
 #include <dirent.h>
 #include <getopt.h>
 #include <stdbool.h>
