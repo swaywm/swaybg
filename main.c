@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
 #include <ctype.h>
+#define __USE_MISC
 #include <dirent.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -431,46 +432,51 @@ static bool store_swaybg_output_config(struct swaybg_state *state,
 	return true;
 }
 
+static char *path_cat(const char *directory, const char *file_name) {
+	char* dir_path = malloc(strlen(directory) + strlen(file_name) + 1);
+	strcpy(dir_path, directory);
+	strcat(strcat(dir_path, "/"), file_name);
+	return dir_path;
+}
+
+static const char *dir_path = NULL;
+
+static int filter_directory(const struct dirent* entry) {
+	gint width;
+	gint height;
+	char *path = path_cat(dir_path, entry->d_name);
+	GdkPixbufFormat *buf = gdk_pixbuf_get_file_info(path, &width, &height);
+	free(path);
+	return (int)(buf != NULL);
+}
+
 static const char *select_file(const char *directory)
 {
 	DIR* dir = opendir(directory);
 	if (dir == NULL) {
-		swaybg_log(LOG_ERROR, "Failed to open directory: %s", optarg);
+		swaybg_log(LOG_ERROR, "Failed to open directory: %s", directory);
 		exit(EXIT_FAILURE);
 	}
 
-	struct dirent* direntp = readdir(dir);
-	uint16_t file_count = 0;
-	while (direntp != NULL) {
-		// TODO: Only read regular files
-		if (direntp->d_name[0] != '.') {
-			file_count++;
-		}
-		direntp = readdir(dir);
-	}
-	closedir(dir);
+	dir_path = directory;
+	struct dirent **namelist;
+	int file_count = scandir(directory, &namelist, filter_directory, alphasort);
 
-	srand(time(NULL));
-	uint16_t rand_index = rand() % file_count;
-
-	dir = opendir(directory);
-	direntp = readdir(dir);
-	uint16_t count = 0;
-	while (direntp != NULL) {
-		// TODO: Only read regular files
-		if (direntp->d_name[0] != '.') {
-			if (count == rand_index) {
-				printf("%s\n", direntp->d_name);
-				// TODO: Fix returning memory from stack
-				return direntp->d_name;
-				break;
-			}
-			count++;
-		}
-		direntp = readdir(dir);
+	if (file_count == 0) {
+		swaybg_log(LOG_ERROR, "Failed to find valid image in directory: %s", directory);
+		exit(EXIT_FAILURE);
 	}
-	closedir(dir);
-	exit(EXIT_FAILURE);
+
+	int index = rand() % file_count;
+
+	char *image_path = path_cat(directory, namelist[index]->d_name);
+
+	for (int i = 0; i < file_count; i++) {
+		free(namelist[i]);
+	}
+	free(namelist);
+
+	return image_path;
 }
 
 static void parse_command_line(int argc, char **argv,
@@ -524,8 +530,8 @@ static void parse_command_line(int argc, char **argv,
 			config->image_path = optarg;
 			break;
 		case 'd':  // directory
-			// TODO: Long option is segfaulting
-			config->image_path = strcat(strcat(optarg, "/"), select_file(optarg));
+			// TODO: --directory is segfaulting
+			config->image_path = select_file(optarg);
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
@@ -592,6 +598,8 @@ int main(int argc, char **argv) {
 	wl_list_init(&state.configs);
 	wl_list_init(&state.outputs);
 	wl_list_init(&state.images);
+
+	srand(getpid() + time(NULL));
 
 	parse_command_line(argc, argv, &state);
 
