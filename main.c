@@ -485,7 +485,7 @@ static void parse_command_line(int argc, char **argv,
 		{"color", required_argument, NULL, 'c'},
 		{"help", no_argument, NULL, 'h'},
 		{"image", required_argument, NULL, 'i'},
-		{"directory", no_argument, NULL, 'd'},
+		{"directory", required_argument, NULL, 'd'},
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
 		{"version", no_argument, NULL, 'v'},
@@ -530,7 +530,6 @@ static void parse_command_line(int argc, char **argv,
 			config->image_path = optarg;
 			break;
 		case 'd':  // directory
-			// TODO: --directory is segfaulting
 			config->image_path = select_file(optarg);
 			break;
 		case 'm':  // mode
