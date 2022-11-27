@@ -26,6 +26,10 @@ if is_freebsd
 	add_project_arguments('-D_C11_SOURCE', language: 'c')
 endif
 
+
+cc = meson.get_compiler('c')
+rt = cc.find_library('rt')
+
 wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.14')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
@@ -94,6 +98,7 @@ client_protos = declare_dependency(
 dependencies = [
 	cairo,
 	client_protos,
+	rt,
 	gdk_pixbuf,
 	wayland_client,
 ]
