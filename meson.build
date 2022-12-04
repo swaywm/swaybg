@@ -68,8 +68,7 @@ wayland_scanner_client = generator(
 	arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
 )
 
-client_protos_src = []
-client_protos_headers = []
+protos_src = []
 
 client_protocols = [
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
@@ -79,43 +78,27 @@ client_protocols = [
 ]
 
 foreach filename : client_protocols
-	client_protos_src += wayland_scanner_code.process(filename)
-	client_protos_headers += wayland_scanner_client.process(filename)
+	protos_src += wayland_scanner_code.process(filename)
+	protos_src += wayland_scanner_client.process(filename)
 endforeach
 
-lib_client_protos = static_library(
-	'client_protos',
-	client_protos_src + client_protos_headers,
-	dependencies: [wayland_client]
-) # for the include directory
-
-client_protos = declare_dependency(
-	link_with: lib_client_protos,
-	sources: client_protos_headers,
-)
-
-dependencies = [
-	cairo,
-	client_protos,
-	rt,
-	gdk_pixbuf,
-	wayland_client,
-]
-
-sources = [
-	'background-image.c',
-	'cairo.c',
-	'log.c',
-	'main.c',
-	'pool-buffer.c',
-]
-
-swaybg_inc = include_directories('include')
-
-executable('swaybg',
-	sources,
-	include_directories: [swaybg_inc],
-	dependencies: dependencies,
+executable(
+	'swaybg',
+	[
+		'background-image.c',
+		'cairo.c',
+		'log.c',
+		'main.c',
+		'pool-buffer.c',
+		protos_src,
+	],
+	include_directories: 'include',
+	dependencies: [
+		cairo,
+		rt,
+		gdk_pixbuf,
+		wayland_client,
+	],
 	install: true
 )
 
