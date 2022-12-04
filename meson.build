@@ -26,7 +26,6 @@ if is_freebsd
 	add_project_arguments('-D_C11_SOURCE', language: 'c')
 endif
 
-
 cc = meson.get_compiler('c')
 rt = cc.find_library('rt')
 
@@ -55,7 +54,7 @@ add_project_arguments([
 
 wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
 
-wayland_scanner_prog = find_program(wayland_scanner.get_variable('wayland_scanner'))
+wayland_scanner_prog = find_program(wayland_scanner.get_variable('wayland_scanner'), native: true)
 
 wayland_scanner_code = generator(
 	wayland_scanner_prog,
