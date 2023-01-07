@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdint.h>
 #include <cairo.h>
 #include "cairo_util.h"
@@ -11,6 +12,27 @@ void cairo_set_source_u32(cairo_t *cairo, uint32_t color) {
 			(color >> (2*8) & 0xFF) / 255.0,
 			(color >> (1*8) & 0xFF) / 255.0,
 			(color >> (0*8) & 0xFF) / 255.0);
+}
+
+void cairo_rgb30_swap_rb(cairo_surface_t *surface) {
+	assert(cairo_image_surface_get_format(surface) == CAIRO_FORMAT_RGB30);
+
+	unsigned char *data = cairo_image_surface_get_data(surface);
+	int w = cairo_image_surface_get_width(surface);
+	int h = cairo_image_surface_get_height(surface);
+	int stride = cairo_image_surface_get_stride(surface);
+	for (int y = 0; y < h; y++) {
+		uint32_t *row = (uint32_t *)(data + stride * y);
+		for (int x = 0; x < w; x++) {
+			uint32_t pix = row[x];
+			// swap blue (0:10) and red (20:30)
+			pix = (pix & 0xc00ffc00) | ((pix & 0x3ff00000) >> 20) |
+				((pix & 0x3ff) << 20);
+			row[x] = pix;
+		}
+	}
+
+	cairo_surface_mark_dirty(surface);
 }
 
 #if HAVE_GDK_PIXBUF
