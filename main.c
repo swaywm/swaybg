@@ -15,6 +15,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
+#include "fractional-scale-v1-client-protocol.h"
 
 static uint32_t parse_color(const char *color) {
 	if (color[0] == '#') {
@@ -41,6 +42,7 @@ struct swaybg_state {
 	struct zwlr_layer_shell_v1 *layer_shell;
 	struct wp_viewporter *viewporter;
 	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
+	struct wp_fractional_scale_manager_v1 *fract_scale_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
@@ -74,9 +76,11 @@ struct swaybg_output {
 	struct wl_surface *surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
 	struct wp_viewport *viewport;
+	struct wp_fractional_scale_v1 *fract_scale;
 
 	uint32_t width, height;
 	int32_t scale;
+	uint32_t pref_fract_scale;
 
 	uint32_t configure_serial;
 	bool dirty, needs_ack;
@@ -158,22 +162,84 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 	return wl_buf;
 }
 
+/* Return b minimizing |b/256 - a/120| ; requires a<INT_MAX/32 */
+static int32_t fract_apx_120_256(int32_t a) {
+	// 256/120 = 32/15
+	int32_t b0 = (32 * a) / 15;
+	int32_t diff0 = b0 * 15 - 32 * a;
+	return diff0 <= (32 / 2) ? b0 : b0 + 1;
+}
+
+#define FRACT_DENOM 120
+
 // Return the size of the buffer that should be attached to this output
 static void get_buffer_size(const struct swaybg_output *output,
-		uint32_t *buffer_width, uint32_t *buffer_height) {
+		uint32_t *buffer_width, uint32_t *buffer_height,
+		wl_fixed_t *buffer_act_width, wl_fixed_t *buffer_act_height) {
 	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
 			output->state->viewporter) {
 		*buffer_width = 1;
 		*buffer_height = 1;
+		*buffer_act_width = wl_fixed_from_int(*buffer_width);
+		*buffer_act_height = wl_fixed_from_int(*buffer_height);
+	} else if (output->fract_scale && output->state->viewporter) {
+		/* We assume the output has a 'logical pixel' grid and a
+		 * 'physical pixel' grid, both of which align at the 0,0 corner
+		 * of the surface.
+		 *
+		 * The physical pixel grid is exactly 'output->pref_fract_scale / 120'
+		 * times wider than the logical pixel grid.
+		 *
+		 * If the logical size is (w,h), to draw the surface matching
+		 * the physical pixel grid we ideally create something with size
+		 * ceil(w*s/120),ceil(h*s/120), and using wp_viewporter map the
+		 * fractional subrectangle (0,0,w*s/120,h*s/120) onto the logical
+		 * rectangle (w,s).
+		 *
+		 * However, wp_viewporter only allows specifying the source
+		 * rectangle using fixed point with denominator 256. So the
+		 * fractional subrectangle (0,0,w*s/120,h*s/120) is only
+		 * exactly representable if s is a multiple of 15.
+		 *
+		 * Note: adding a 'wp_viewport.set_source_rational(x,y,w,h,denom)'
+		 * function would fix this problem.
+		 *
+		 * Fortunately: the max-min approximation of (a/120) by (b/256)
+		 * occurs at (4/120 - 9/256) = 7/3840 = 0.0018. If bilinear
+		 * texture upscaling is used this introduces only <0.2% color
+		 * error if a pure white pixel is merged with a pure black one.
+		 * If nearest neighbor scaling is used the physical pixel grid
+		 * and pixel grid used by the source buffer are close enough
+		 * to match everywhere.
+		 *
+		 * Note that swaybg, centers and scales images based on the
+		 * buffer size, not the viewport source size; this produces
+		 * a slightly off-center image but one which should be aligned to
+		 * (physical) pixels.
+		 */
+
+		// actual buffer width is ceiling
+		*buffer_width = (output->width * output->pref_fract_scale +
+			FRACT_DENOM - 1) / FRACT_DENOM;
+		*buffer_height = (output->height * output->pref_fract_scale +
+			FRACT_DENOM - 1) / FRACT_DENOM;
+		// buffer view width is closest approximation
+		*buffer_act_width = fract_apx_120_256(
+			(int32_t)(output->width * output->pref_fract_scale));
+		*buffer_act_height = fract_apx_120_256(
+			(int32_t)(output->height * output->pref_fract_scale));
 	} else {
 		*buffer_width = output->width * output->scale;
 		*buffer_height = output->height * output->scale;
+		*buffer_act_width = wl_fixed_from_int(*buffer_width);
+		*buffer_act_height = wl_fixed_from_int(*buffer_height);
 	}
 }
 
 static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
 	uint32_t buffer_width, buffer_height;
-	get_buffer_size(output, &buffer_width, &buffer_height);
+	wl_fixed_t buffer_act_width, buffer_act_height;
+	get_buffer_size(output, &buffer_width, &buffer_height, &buffer_act_width, &buffer_act_height);
 
 	// Attach a new buffer if the desired size has changed
 	if (buffer_width != output->buffer_width ||
@@ -195,6 +261,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 	}
 
 	if (output->viewport) {
+		wp_viewport_set_source(output->viewport, 0, 0, buffer_act_width, buffer_act_height);
 		wp_viewport_set_destination(output->viewport, output->width, output->height);
 	} else {
 		wl_surface_set_buffer_scale(output->surface, output->scale);
@@ -233,6 +300,9 @@ static void destroy_swaybg_output(struct swaybg_output *output) {
 	if (output->viewport != NULL) {
 		wp_viewport_destroy(output->viewport);
 	}
+	if (output->fract_scale != NULL) {
+		wp_fractional_scale_v1_destroy(output->fract_scale);
+	}
 	wl_output_destroy(output->wl_output);
 	free(output->name);
 	free(output->identifier);
@@ -263,6 +333,16 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 	.closed = layer_surface_closed,
 };
 
+static void fract_preferred_scale(void *data, struct wp_fractional_scale_v1 *f,
+	       uint32_t scale) {
+	struct swaybg_output *output = data;
+	output->pref_fract_scale = scale;
+}
+
+static const struct wp_fractional_scale_v1_listener fract_scale_listener = {
+	.preferred_scale = fract_preferred_scale
+};
+
 static void output_geometry(void *data, struct wl_output *output, int32_t x,
 		int32_t y, int32_t width_mm, int32_t height_mm, int32_t subpixel,
 		const char *make, const char *model, int32_t transform) {
@@ -285,8 +365,17 @@ static void create_layer_surface(struct swaybg_output *output) {
 	wl_surface_set_input_region(output->surface, input_region);
 	wl_region_destroy(input_region);
 
+	if (output->state->fract_scale_manager) {
+		output->fract_scale = wp_fractional_scale_manager_v1_get_fractional_scale(
+			output->state->fract_scale_manager, output->surface);
+		assert(output->fract_scale);
+		wp_fractional_scale_v1_add_listener(output->fract_scale,
+			&fract_scale_listener, output);
+	}
+
 	if (output->state->viewporter &&
-			output->config->mode == BACKGROUND_MODE_SOLID_COLOR) {
+			(output->config->mode == BACKGROUND_MODE_SOLID_COLOR ||
+				output->state->fract_scale_manager)) {
 		output->viewport =  wp_viewporter_get_viewport(
 			output->state->viewporter, output->surface);
 	}
@@ -410,6 +499,9 @@ static void handle_global(void *data, struct wl_registry *registry,
 			wp_single_pixel_buffer_manager_v1_interface.name) == 0) {
 		state->single_pixel_buffer_manager = wl_registry_bind(registry, name,
 			&wp_single_pixel_buffer_manager_v1_interface, 1);
+	} else if (strcmp(interface, wp_fractional_scale_manager_v1_interface.name) == 0) {
+		state->fract_scale_manager = wl_registry_bind(registry, name,
+			&wp_fractional_scale_manager_v1_interface, 1);
 	}
 }
 
@@ -626,7 +718,9 @@ int main(int argc, char **argv) {
 			}
 
 			uint32_t buffer_width, buffer_height;
-			get_buffer_size(output, &buffer_width, &buffer_height);
+			wl_fixed_t buffer_act_width, buffer_act_height;
+			get_buffer_size(output, &buffer_width, &buffer_height,
+				&buffer_act_width, &buffer_act_height);
 			bool buffer_change = output->buffer_width != buffer_width ||
 				output->buffer_height != buffer_height;
 			if (output->dirty && output->config->image && buffer_change) {

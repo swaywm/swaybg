@@ -30,7 +30,7 @@ cc = meson.get_compiler('c')
 rt = cc.find_library('rt')
 m = cc.find_library('m')
 wayland_client = dependency('wayland-client')
-wayland_protos = dependency('wayland-protocols', version: '>=1.14')
+wayland_protos = dependency('wayland-protocols', version: '>=1.31')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
 cairo = dependency('cairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
@@ -74,6 +74,7 @@ client_protocols = [
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
 	wl_protocol_dir / 'stable/viewporter/viewporter.xml',
 	wl_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
+	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
 	'wlr-layer-shell-unstable-v1.xml',
 ]
 
