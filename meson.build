@@ -28,7 +28,7 @@ endif
 
 cc = meson.get_compiler('c')
 rt = cc.find_library('rt')
-
+m = cc.find_library('m')
 wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.14')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
@@ -95,6 +95,7 @@ executable(
 	include_directories: 'include',
 	dependencies: [
 		cairo,
+		m,
 		rt,
 		gdk_pixbuf,
 		wayland_client,

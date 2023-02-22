@@ -99,11 +99,13 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		}
 		break;
 	}
-	case BACKGROUND_MODE_CENTER:
-		cairo_set_source_surface(cairo, image,
-				(double)buffer_width / 2 - width / 2,
-				(double)buffer_height / 2 - height / 2);
-		break;
+	case BACKGROUND_MODE_CENTER: {
+		// Round x and y coordinates, so ensure that the image and surface
+		// pixels are aligned. This does makes the image be slightly off center.
+		double x = round((double)buffer_width / 2 - width / 2);
+		double y = round((double)buffer_height / 2 - height / 2);
+		cairo_set_source_surface(cairo, image, x, y);
+	} break;
 	case BACKGROUND_MODE_TILE: {
 		cairo_pattern_t *pattern = cairo_pattern_create_for_surface(image);
 		cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
