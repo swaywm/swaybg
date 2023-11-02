@@ -455,7 +455,7 @@ static void parse_command_line(int argc, char **argv,
 		"Background Modes:\n"
 		"  stretch, fit, fill, center, tile, or solid_color\n";
 
-	struct swaybg_output_config *config = calloc(sizeof(struct swaybg_output_config), 1);
+	struct swaybg_output_config *config = calloc(1, sizeof(struct swaybg_output_config));
 	config->output = strdup("*");
 	config->mode = BACKGROUND_MODE_INVALID;
 	wl_list_init(&config->link); // init for safe removal
@@ -489,7 +489,7 @@ static void parse_command_line(int argc, char **argv,
 				// Empty config or merged on top of an existing one
 				destroy_swaybg_output_config(config);
 			}
-			config = calloc(sizeof(struct swaybg_output_config), 1);
+			config = calloc(1, sizeof(struct swaybg_output_config));
 			config->output = strdup(optarg);
 			config->mode = BACKGROUND_MODE_INVALID;
 			wl_list_init(&config->link);  // init for safe removal
