@@ -15,6 +15,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
+#include "fractional-scale-v1-client-protocol.h"
 
 static uint32_t parse_color(const char *color) {
 	if (color[0] == '#') {
@@ -41,6 +42,7 @@ struct swaybg_state {
 	struct zwlr_layer_shell_v1 *layer_shell;
 	struct wp_viewporter *viewporter;
 	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
+	struct wp_fractional_scale_manager_v1 *fract_scale_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
@@ -73,13 +75,17 @@ struct swaybg_output {
 
 	struct wl_surface *surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
+	struct wp_viewport *viewport;
+	struct wp_fractional_scale_v1 *fract_scale;
 
 	uint32_t width, height;
 	int32_t scale;
+	uint32_t pref_fract_scale;
 
 	uint32_t configure_serial;
 	bool dirty, needs_ack;
-	int32_t committed_width, committed_height, committed_scale;
+	// dimensions of the wl_buffer attached to the wl_surface
+	uint32_t buffer_width, buffer_height;
 
 	struct wl_list link;
 };
@@ -102,26 +108,13 @@ bool is_valid_color(const char *color) {
 	return true;
 }
 
-static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
-	int buffer_width = output->width * output->scale,
-		buffer_height = output->height * output->scale;
-
-	// If the last committed buffer has the same size as this one would, do
-	// not render a new buffer, because it will be identical to the old one
-	if (output->committed_width == buffer_width &&
-			output->committed_height == buffer_height) {
-		if (output->committed_scale != output->scale) {
-			wl_surface_set_buffer_scale(output->surface, output->scale);
-			wl_surface_commit(output->surface);
-
-			output->committed_scale = output->scale;
-		}
-		return;
-	}
-
-	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
-			output->state->viewporter &&
+// Create a wl_buffer with the specified dimensions and content
+static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
+		cairo_surface_t *surface, uint32_t buffer_width, uint32_t buffer_height) {
+	if (buffer_width == 1 && buffer_height == 1 &&
+			output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
 			output->state->single_pixel_buffer_manager) {
+		// create and return single pixel buffer
 		uint8_t r8 = (output->config->color >> 24) & 0xFF;
 		uint8_t g8 = (output->config->color >> 16) & 0xFF;
 		uint8_t b8 = (output->config->color >> 8) & 0xFF;
@@ -131,26 +124,15 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		uint32_t g32 = g8 * f;
 		uint32_t b32 = b8 * f;
 		uint32_t a32 = a8 * f;
-		struct wl_buffer *buffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
+		return wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
 			output->state->single_pixel_buffer_manager, r32, g32, b32, a32);
-		wl_surface_attach(output->surface, buffer, 0, 0);
-		wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
-
-		struct wp_viewport *viewport = wp_viewporter_get_viewport(
-			output->state->viewporter, output->surface);
-		wp_viewport_set_destination(viewport, output->width, output->height);
-
-		wl_surface_commit(output->surface);
-
-		wp_viewport_destroy(viewport);
-		wl_buffer_destroy(buffer);
-		return;
 	}
+
 
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
 			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
-		return;
+		return NULL;
 	}
 
 	cairo_t *cairo = buffer.cairo;
@@ -173,17 +155,63 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		}
 	}
 
-	wl_surface_set_buffer_scale(output->surface, output->scale);
-	wl_surface_attach(output->surface, buffer.buffer, 0, 0);
-	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
-	wl_surface_commit(output->surface);
-
-	output->committed_width = buffer_width;
-	output->committed_height = buffer_height;
-	output->committed_scale = output->scale;
-
-	// we will not reuse the buffer, so destroy it immediately
+	// return wl_buffer for caller to use and destroy
+	struct wl_buffer *wl_buf = buffer.buffer;
+	buffer.buffer = NULL;
 	destroy_buffer(&buffer);
+	return wl_buf;
+}
+
+#define FRACT_DENOM 120
+
+// Return the size of the buffer that should be attached to this output
+static void get_buffer_size(const struct swaybg_output *output,
+		uint32_t *buffer_width, uint32_t *buffer_height) {
+	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
+			output->state->viewporter) {
+		*buffer_width = 1;
+		*buffer_height = 1;
+	} else if (output->fract_scale && output->state->viewporter) {
+		// rounding mode is 'round half up'
+		*buffer_width = (output->width * output->pref_fract_scale +
+			FRACT_DENOM / 2) / FRACT_DENOM;
+		*buffer_height = (output->height * output->pref_fract_scale +
+			FRACT_DENOM / 2) / FRACT_DENOM;
+	} else {
+		*buffer_width = output->width * output->scale;
+		*buffer_height = output->height * output->scale;
+	}
+}
+
+static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
+	uint32_t buffer_width, buffer_height;
+	get_buffer_size(output, &buffer_width, &buffer_height);
+
+	// Attach a new buffer if the desired size has changed
+	if (buffer_width != output->buffer_width ||
+			buffer_height != output->buffer_height) {
+		struct wl_buffer *buf = draw_buffer(output, surface,
+			buffer_width, buffer_height);
+		if (!buf) {
+			return;
+		}
+
+		wl_surface_attach(output->surface, buf, 0, 0);
+		wl_surface_damage_buffer(output->surface, 0, 0,
+			buffer_width, buffer_height);
+
+		wl_buffer_destroy(buf);
+
+		output->buffer_width = buffer_width;
+		output->buffer_height = buffer_height;
+	}
+
+	if (output->viewport) {
+		wp_viewport_set_destination(output->viewport, output->width, output->height);
+	} else {
+		wl_surface_set_buffer_scale(output->surface, output->scale);
+	}
+	wl_surface_commit(output->surface);
 }
 
 static void destroy_swaybg_image(struct swaybg_image *image) {
@@ -213,6 +241,12 @@ static void destroy_swaybg_output(struct swaybg_output *output) {
 	}
 	if (output->surface != NULL) {
 		wl_surface_destroy(output->surface);
+	}
+	if (output->viewport != NULL) {
+		wp_viewport_destroy(output->viewport);
+	}
+	if (output->fract_scale != NULL) {
+		wp_fractional_scale_v1_destroy(output->fract_scale);
 	}
 	wl_output_destroy(output->wl_output);
 	free(output->name);
@@ -244,6 +278,16 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 	.closed = layer_surface_closed,
 };
 
+static void fract_preferred_scale(void *data, struct wp_fractional_scale_v1 *f,
+	       uint32_t scale) {
+	struct swaybg_output *output = data;
+	output->pref_fract_scale = scale;
+}
+
+static const struct wp_fractional_scale_v1_listener fract_scale_listener = {
+	.preferred_scale = fract_preferred_scale
+};
+
 static void output_geometry(void *data, struct wl_output *output, int32_t x,
 		int32_t y, int32_t width_mm, int32_t height_mm, int32_t subpixel,
 		const char *make, const char *model, int32_t transform) {
@@ -265,6 +309,21 @@ static void create_layer_surface(struct swaybg_output *output) {
 	assert(input_region);
 	wl_surface_set_input_region(output->surface, input_region);
 	wl_region_destroy(input_region);
+
+	if (output->state->fract_scale_manager) {
+		output->fract_scale = wp_fractional_scale_manager_v1_get_fractional_scale(
+			output->state->fract_scale_manager, output->surface);
+		assert(output->fract_scale);
+		wp_fractional_scale_v1_add_listener(output->fract_scale,
+			&fract_scale_listener, output);
+	}
+
+	if (output->state->viewporter &&
+			(output->config->mode == BACKGROUND_MODE_SOLID_COLOR ||
+				output->state->fract_scale_manager)) {
+		output->viewport =  wp_viewporter_get_viewport(
+			output->state->viewporter, output->surface);
+	}
 
 	output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
 			output->state->layer_shell, output->surface, output->wl_output,
@@ -385,6 +444,9 @@ static void handle_global(void *data, struct wl_registry *registry,
 			wp_single_pixel_buffer_manager_v1_interface.name) == 0) {
 		state->single_pixel_buffer_manager = wl_registry_bind(registry, name,
 			&wp_single_pixel_buffer_manager_v1_interface, 1);
+	} else if (strcmp(interface, wp_fractional_scale_manager_v1_interface.name) == 0) {
+		state->fract_scale_manager = wl_registry_bind(registry, name,
+			&wp_fractional_scale_manager_v1_interface, 1);
 	}
 }
 
@@ -600,11 +662,10 @@ int main(int argc, char **argv) {
 						output->configure_serial);
 			}
 
-			int buffer_width = output->width * output->scale,
-				buffer_height = output->height * output->scale;
-			bool buffer_change =
-				output->committed_height != buffer_height ||
-				output->committed_width != buffer_width;
+			uint32_t buffer_width, buffer_height;
+			get_buffer_size(output, &buffer_width, &buffer_height);
+			bool buffer_change = output->buffer_width != buffer_width ||
+				output->buffer_height != buffer_height;
 			if (output->dirty && output->config->image && buffer_change) {
 				output->config->image->load_required = true;
 			}
