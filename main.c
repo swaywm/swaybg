@@ -16,22 +16,29 @@
 #include "viewporter-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
 
-static uint32_t parse_color(const char *color) {
+/*
+ * If `color` is a hexadecimal string of the form 'rrggbb' or '#rrggbb',
+ * `*result` will be set to the uint32_t version of the color. Otherwise,
+ * return false and leave `*result` unmodified.
+ */
+static bool parse_color(const char *color, uint32_t *result) {
 	if (color[0] == '#') {
 		++color;
 	}
 
 	int len = strlen(color);
-	if (len != 6 && len != 8) {
-		swaybg_log(LOG_DEBUG, "Invalid color %s, defaulting to 0xFFFFFFFF",
-				color);
-		return 0xFFFFFFFF;
+	if (len != 6) {
+		return false;
 	}
-	uint32_t res = (uint32_t)strtoul(color, NULL, 16);
-	if (strlen(color) == 6) {
-		res = (res << 8) | 0xFF;
+	for (int i = 0; i < len; ++i) {
+		if (!isxdigit(color[i])) {
+			return false;
+		}
 	}
-	return res;
+
+	uint32_t val = (uint32_t)strtoul(color, NULL, 16);
+	*result = (val << 8) | 0xFF;
+	return true;
 }
 
 struct swaybg_state {
@@ -83,24 +90,6 @@ struct swaybg_output {
 
 	struct wl_list link;
 };
-
-bool is_valid_color(const char *color) {
-	int len = strlen(color);
-	if (len != 7 || color[0] != '#') {
-		swaybg_log(LOG_ERROR, "%s is not a valid color for swaybg. "
-				"Color should be specified as #rrggbb (no alpha).", color);
-		return false;
-	}
-
-	int i;
-	for (i = 1; i < len; ++i) {
-		if (!isxdigit(color[i])) {
-			return false;
-		}
-	}
-
-	return true;
-}
 
 static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
 	int buffer_width = output->width * output->scale,
@@ -469,11 +458,11 @@ static void parse_command_line(int argc, char **argv,
 		}
 		switch (c) {
 		case 'c':  // color
-			if (!is_valid_color(optarg)) {
-				swaybg_log(LOG_ERROR, "Invalid color: %s", optarg);
+			if (!parse_color(optarg, &config->color)) {
+				swaybg_log(LOG_ERROR, "%s is not a valid color for swaybg. "
+					"Color should be specified as rrggbb or #rrggbb (no alpha).", optarg);
 				continue;
 			}
-			config->color = parse_color(optarg);
 			break;
 		case 'i':  // image
 			config->image_path = optarg;
