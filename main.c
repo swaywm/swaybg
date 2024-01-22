@@ -138,28 +138,18 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
-			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
+			buffer_width, buffer_height, WL_SHM_FORMAT_XRGB8888)) {
 		return;
 	}
 
 	cairo_t *cairo = buffer.cairo;
-	cairo_save(cairo);
-	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	uint32_t bg_color = output->config->color ? output->config->color : 0x3f3f3fff;
+	cairo_set_source_u32(cairo, bg_color);
 	cairo_paint(cairo);
-	cairo_restore(cairo);
-	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR) {
-		cairo_set_source_u32(cairo, output->config->color);
-		cairo_paint(cairo);
-	} else {
-		if (output->config->color) {
-			cairo_set_source_u32(cairo, output->config->color);
-			cairo_paint(cairo);
-		}
 
-		if (surface) {
-			render_background_image(cairo, surface,
-				output->config->mode, buffer_width, buffer_height);
-		}
+	if (surface) {
+		render_background_image(cairo, surface,
+			output->config->mode, buffer_width, buffer_height);
 	}
 
 	wl_surface_set_buffer_scale(output->surface, output->scale);
