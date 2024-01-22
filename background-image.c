@@ -22,17 +22,42 @@ enum background_mode parse_background_mode(const char *mode) {
 }
 
 cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *image;
+	cairo_surface_t *image = NULL;
+
+	// Prefer to load PNG images with Cairo, since it can load images with
+	// higher bit depths at full precision
+	const char *suffix = strrchr(path, '.');
+	if (suffix && (!strcmp(suffix, ".png") || !strcmp(suffix, ".PNG"))) {
+		image = cairo_image_surface_create_from_png(path);
+	}
+
+	// if not a PNG image, try to load with gdk-pixbuf
 #if HAVE_GDK_PIXBUF
-	GError *err = NULL;
-	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
-	if (!pixbuf) {
-		swaybg_log(LOG_ERROR, "Failed to load background image (%s).",
-				err->message);
+	if (!image) {
+		GError *err = NULL;
+		GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
+		if (!pixbuf) {
+			swaybg_log(LOG_ERROR, "Failed to load background image (%s).",
+					err->message);
+			return NULL;
+		}
+		image = gdk_cairo_image_surface_create_from_pixbuf(pixbuf);
+		g_object_unref(pixbuf);
+	}
+#endif // HAVE_GDK_PIXBUF
+
+	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
+		swaybg_log(LOG_ERROR, "Failed to read background image: %s."
+#if !HAVE_GDK_PIXBUF
+				"\nSway was compiled without gdk_pixbuf support, so only"
+				"\nPNG images can be loaded. This is the likely cause."
+#endif // !HAVE_GDK_PIXBUF
+				, cairo_status_to_string(cairo_surface_status(image)));
 		return NULL;
 	}
-	image = gdk_cairo_image_surface_create_from_pixbuf(pixbuf);
-	g_object_unref(pixbuf);
+
+#if HAVE_GDK_PIXBUF
+
 #else
 	image = cairo_image_surface_create_from_png(path);
 #endif // HAVE_GDK_PIXBUF
