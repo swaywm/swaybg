@@ -17,9 +17,9 @@
 #include "single-pixel-buffer-v1-client-protocol.h"
 
 /*
- * If `color` is a hexadecimal string of the form 'rrggbb' or '#rrggbb',
- * `*result` will be set to the uint32_t version of the color. Otherwise,
- * return false and leave `*result` unmodified.
+ * If `color` is a hexadecimal string of the form 'rrggbb', 'rgb', '#rgb', or
+ * '#rrggbb', `*result` will be set to the uint32_t version of the color.
+ * Otherwise, return false and leave `*result` unmodified.
  */
 static bool parse_color(const char *color, uint32_t *result) {
 	if (color[0] == '#') {
@@ -27,7 +27,7 @@ static bool parse_color(const char *color, uint32_t *result) {
 	}
 
 	int len = strlen(color);
-	if (len != 6) {
+	if (len != 3 && len != 6) {
 		return false;
 	}
 	for (int i = 0; i < len; ++i) {
@@ -37,7 +37,15 @@ static bool parse_color(const char *color, uint32_t *result) {
 	}
 
 	uint32_t val = (uint32_t)strtoul(color, NULL, 16);
-	*result = (val << 8) | 0xFF;
+	if (len == 3) {
+		uint32_t r = ((val >> 8) & 0xF) * 0x11000000;
+		uint32_t g = ((val >> 4) & 0xF) * 0x00110000;
+		uint32_t b = (val & 0xF)        * 0x00001100;
+		*result = r | g | b | 0xFF;
+	} else {
+		*result = (val << 8) | 0xFF;
+	}
+
 	return true;
 }
 
@@ -460,7 +468,8 @@ static void parse_command_line(int argc, char **argv,
 		case 'c':  // color
 			if (!parse_color(optarg, &config->color)) {
 				swaybg_log(LOG_ERROR, "%s is not a valid color for swaybg. "
-					"Color should be specified as rrggbb or #rrggbb (no alpha).", optarg);
+					"Color should be specified as rrggbb, rgb, #rrggbb, or "
+					"#rgb (no alpha).", optarg);
 				continue;
 			}
 			break;
