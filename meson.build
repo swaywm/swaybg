@@ -11,22 +11,20 @@ project(
 	],
 )
 
-add_project_arguments(
-	[
-		'-Wno-unused-parameter',
-		'-Wno-unused-result',
-		'-Wundef',
-		'-Wvla',
-	],
-	language: 'c',
-)
+cc = meson.get_compiler('c')
+
+add_project_arguments(cc.get_supported_arguments([
+	'-Wno-unused-parameter',
+	'-Wno-unused-result',
+	'-Wundef',
+	'-Wvla',
+]), language: 'c')
 
 is_freebsd = host_machine.system().startswith('freebsd')
 if is_freebsd
 	add_project_arguments('-D_C11_SOURCE', language: 'c')
 endif
 
-cc = meson.get_compiler('c')
 rt = cc.find_library('rt')
 
 wayland_client = dependency('wayland-client')
