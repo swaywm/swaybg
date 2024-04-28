@@ -14,6 +14,7 @@
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
+#include "surface-invalidation-v1-client-protocol.h"
 
 /*
  * If `color` is a hexadecimal string of the form 'rrggbb' or '#rrggbb',
@@ -47,6 +48,7 @@ struct swaybg_state {
 	struct zwlr_layer_shell_v1 *layer_shell;
 	struct wp_viewporter *viewporter;
 	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
+	struct wp_surface_invalidation_manager_v1 *surface_invalidation_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
@@ -86,6 +88,12 @@ struct swaybg_output {
 	uint32_t configure_serial;
 	bool dirty, needs_ack;
 	int32_t committed_width, committed_height, committed_scale;
+
+	struct {
+		struct wp_surface_invalidation_v1 *object;
+		bool needs_ack;
+		uint32_t serial;
+	} surface_invalidation;
 
 	struct wl_list link;
 };
@@ -243,9 +251,31 @@ static void output_mode(void *data, struct wl_output *output, uint32_t flags,
 	// Who cares
 }
 
+static void surface_invalidation_handle_invalidated(void *data,
+		struct wp_surface_invalidation_v1 *wp_surface_invalidation_v1, uint32_t serial) {
+	struct swaybg_output *output = data;
+	assert(output->surface_invalidation.object == wp_surface_invalidation_v1);
+
+	output->dirty = true;
+	output->surface_invalidation.needs_ack = true;
+	output->surface_invalidation.serial = serial;
+}
+
+static struct wp_surface_invalidation_v1_listener surface_invalidation_listener = {
+	.invalidated = surface_invalidation_handle_invalidated,
+};
+
 static void create_layer_surface(struct swaybg_output *output) {
 	output->surface = wl_compositor_create_surface(output->state->compositor);
 	assert(output->surface);
+
+	if (output->state->surface_invalidation_manager) {
+		output->surface_invalidation.object =
+			wp_surface_invalidation_manager_v1_get_surface_invalidation(
+				output->state->surface_invalidation_manager, output->surface);
+		wp_surface_invalidation_v1_add_listener(output->surface_invalidation.object,
+			&surface_invalidation_listener, output);
+	}
 
 	// Empty input region
 	struct wl_region *input_region =
@@ -373,6 +403,10 @@ static void handle_global(void *data, struct wl_registry *registry,
 			wp_single_pixel_buffer_manager_v1_interface.name) == 0) {
 		state->single_pixel_buffer_manager = wl_registry_bind(registry, name,
 			&wp_single_pixel_buffer_manager_v1_interface, 1);
+	} else if (strcmp(interface,
+			wp_surface_invalidation_manager_v1_interface.name) == 0) {
+		state->surface_invalidation_manager = wl_registry_bind(registry, name,
+			&wp_surface_invalidation_manager_v1_interface, 1);
 	}
 }
 
@@ -586,6 +620,15 @@ int main(int argc, char **argv) {
 				zwlr_layer_surface_v1_ack_configure(
 						output->layer_surface,
 						output->configure_serial);
+			}
+
+			if (output->surface_invalidation.needs_ack) {
+				output->surface_invalidation.needs_ack = false;
+				wp_surface_invalidation_v1_ack(output->surface_invalidation.object,
+					output->surface_invalidation.serial);
+				output->committed_width = 0;
+				output->committed_height = 0;
+				output->committed_scale = 0;
 			}
 
 			int buffer_width = output->width * output->scale,
