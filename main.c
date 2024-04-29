@@ -159,7 +159,7 @@ static void get_buffer_size(const struct swaybg_output *output,
 			output->state->viewporter) {
 		*buffer_width = 1;
 		*buffer_height = 1;
-	} else if (output->fract_scale && output->state->viewporter) {
+	} else if (output->pref_fract_scale && output->state->viewporter) {
 		// rounding mode is 'round half up'
 		*buffer_width = (output->width * output->pref_fract_scale +
 			FRACT_DENOM / 2) / FRACT_DENOM;
@@ -419,6 +419,7 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
 		struct swaybg_output *output = calloc(1, sizeof(struct swaybg_output));
 		output->state = state;
+		output->scale = 1;
 		output->wl_name = name;
 		output->wl_output =
 			wl_registry_bind(registry, name, &wl_output_interface, 4);
