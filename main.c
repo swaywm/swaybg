@@ -653,12 +653,14 @@ int main(int argc, char **argv) {
 						output->configure_serial);
 			}
 
-			uint32_t buffer_width, buffer_height;
-			get_buffer_size(output, &buffer_width, &buffer_height);
-			bool buffer_change = output->buffer_width != buffer_width ||
-				output->buffer_height != buffer_height;
-			if (output->dirty && output->config->image && buffer_change) {
-				output->config->image->load_required = true;
+			if (output->dirty) {
+				uint32_t buffer_width, buffer_height;
+				get_buffer_size(output, &buffer_width, &buffer_height);
+				bool buffer_change = output->buffer_width != buffer_width ||
+					output->buffer_height != buffer_height;
+				if (output->config->image && buffer_change) {
+					output->config->image->load_required = true;
+				}
 			}
 		}
 
