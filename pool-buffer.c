@@ -59,7 +59,7 @@ bool create_buffer(struct pool_buffer *buf, struct wl_shm *shm,
 	buf->size = size;
 	buf->data = data;
 	buf->surface = cairo_image_surface_create_for_data(data,
-			CAIRO_FORMAT_ARGB32, width, height, stride);
+			CAIRO_FORMAT_RGB24, width, height, stride);
 	buf->cairo = cairo_create(buf->surface);
 	return true;
 }
