@@ -53,6 +53,8 @@ struct swaybg_state {
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
 	bool run_display;
+	bool has_xrgb2101010;
+	bool has_xbgr2101010;
 };
 
 struct swaybg_image {
@@ -99,48 +101,58 @@ struct swaybg_output {
 // Create a wl_buffer with the specified dimensions and content
 static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 		cairo_surface_t *surface, uint32_t buffer_width, uint32_t buffer_height) {
+	uint32_t bg_color = output->config->color ? output->config->color : 0x3f3f3fff;
+
 	if (buffer_width == 1 && buffer_height == 1 &&
 			output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
 			output->state->single_pixel_buffer_manager) {
 		// create and return single pixel buffer
-		uint8_t r8 = (output->config->color >> 24) & 0xFF;
-		uint8_t g8 = (output->config->color >> 16) & 0xFF;
-		uint8_t b8 = (output->config->color >> 8) & 0xFF;
-		uint8_t a8 = (output->config->color >> 0) & 0xFF;
+		uint8_t r8 = (bg_color >> 24) & 0xFF;
+		uint8_t g8 = (bg_color >> 16) & 0xFF;
+		uint8_t b8 = (bg_color >> 8) & 0xFF;
 		uint32_t f = 0xFFFFFFFF / 0xFF; // division result is an integer
 		uint32_t r32 = r8 * f;
 		uint32_t g32 = g8 * f;
 		uint32_t b32 = b8 * f;
-		uint32_t a32 = a8 * f;
 		return wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
-			output->state->single_pixel_buffer_manager, r32, g32, b32, a32);
+			output->state->single_pixel_buffer_manager,
+			r32, g32, b32, 0xFFFFFFFF);
 	}
 
+	bool deep_image = false;
+	if (surface) {
+		cairo_format_t fmt = cairo_image_surface_get_format(surface);
+		deep_image = deep_image || fmt == CAIRO_FORMAT_RGB30;
+#if CAIRO_VERSION >= CAIRO_VERSION_ENCODE(1, 17, 2)
+		deep_image = deep_image || fmt == CAIRO_FORMAT_RGB96F;
+		deep_image = deep_image || fmt == CAIRO_FORMAT_RGBA128F;
+#endif
+	}
+
+	uint32_t format = WL_SHM_FORMAT_XRGB8888;
+	if (deep_image && output->state->has_xrgb2101010) {
+		format = WL_SHM_FORMAT_XRGB2101010;
+	} else if (deep_image && output->state->has_xbgr2101010) {
+		format = WL_SHM_FORMAT_XBGR2101010;
+	}
 
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
-			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
+			buffer_width, buffer_height, format)) {
 		return NULL;
 	}
 
 	cairo_t *cairo = buffer.cairo;
-	cairo_save(cairo);
-	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	cairo_set_source_u32(cairo, bg_color);
 	cairo_paint(cairo);
-	cairo_restore(cairo);
-	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR) {
-		cairo_set_source_u32(cairo, output->config->color);
-		cairo_paint(cairo);
-	} else {
-		if (output->config->color) {
-			cairo_set_source_u32(cairo, output->config->color);
-			cairo_paint(cairo);
-		}
 
-		if (surface) {
-			render_background_image(cairo, surface,
-				output->config->mode, buffer_width, buffer_height);
-		}
+	if (surface) {
+		render_background_image(cairo, surface,
+			output->config->mode, buffer_width, buffer_height);
+	}
+
+	if (format == WL_SHM_FORMAT_XBGR2101010) {
+		cairo_rgb30_swap_rb(buffer.surface);
 	}
 
 	// return wl_buffer for caller to use and destroy
@@ -408,6 +420,21 @@ static const struct wl_output_listener output_listener = {
 	.description = output_description,
 };
 
+
+static void shm_format(void *data, struct wl_shm *wl_shm, uint32_t format) {
+	struct swaybg_state *state = data;
+	if (format == WL_SHM_FORMAT_XBGR2101010) {
+		state->has_xbgr2101010 = true;
+	}
+	if (format == WL_SHM_FORMAT_XRGB2101010) {
+		state->has_xrgb2101010 = true;
+	}
+}
+
+static const struct wl_shm_listener shm_listener = {
+	.format = shm_format,
+};
+
 static void handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version) {
 	struct swaybg_state *state = data;
@@ -416,6 +443,7 @@ static void handle_global(void *data, struct wl_registry *registry,
 			wl_registry_bind(registry, name, &wl_compositor_interface, 4);
 	} else if (strcmp(interface, wl_shm_interface.name) == 0) {
 		state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+		wl_shm_add_listener(state->shm, &shm_listener, state);
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
 		struct swaybg_output *output = calloc(1, sizeof(struct swaybg_output));
 		output->state = state;
