@@ -19,9 +19,6 @@ releases are managed independently of sway releases.
 swaybg is available in many distributions. Try installing the "swaybg"
 package for yours.
 
-If you're interested in packaging swaybg for your distribution, stop by the
-IRC channel or shoot an email to sir@cmpwn.com for advice.
-
 ### Compiling from Source
 
 Install dependencies:
