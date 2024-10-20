@@ -2,6 +2,7 @@ image: alpine/edge
 packages:
   - cairo-dev
   - gdk-pixbuf-dev
+  - librsvg-dev
   - meson
   - scdoc
   - wayland-dev
