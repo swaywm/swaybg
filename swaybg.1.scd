@@ -39,6 +39,6 @@ these options.
 
 # AUTHORS
 
-Maintained by Drew DeVault <sir@cmpwn.com>, who is assisted by other open
+Maintained by Simon Ser <contact@emersion.fr>, who is assisted by other open
 source contributors. For more information about swaybg development, see
-https://github.com/swaywm/swaybg.
+<https://github.com/swaywm/swaybg>.
