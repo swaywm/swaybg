@@ -7,6 +7,9 @@
 #include <string.h>
 #include <strings.h>
 #include <wayland-client.h>
+#if HAVE_RSVG
+#include <librsvg/rsvg.h>
+#endif
 #include "background-image.h"
 #include "cairo_util.h"
 #include "log.h"
@@ -98,7 +101,8 @@ struct swaybg_output {
 
 // Create a wl_buffer with the specified dimensions and content
 static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
-		cairo_surface_t *surface, uint32_t buffer_width, uint32_t buffer_height) {
+		cairo_surface_t *surface, RsvgHandle *svg,
+		uint32_t buffer_width, uint32_t buffer_height) {
 	uint32_t bg_color = output->config->color ? output->config->color : 0x000000ff;
 
 	if (buffer_width == 1 && buffer_height == 1 &&
@@ -132,6 +136,12 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 		render_background_image(cairo, surface,
 			output->config->mode, buffer_width, buffer_height);
 	}
+#if HAVE_RSVG
+	if (svg) {
+		render_background_image_svg(cairo, svg, output->config->mode,
+			buffer_width, buffer_height);
+	}
+#endif
 
 	// return wl_buffer for caller to use and destroy
 	struct wl_buffer *wl_buf = buffer.buffer;
@@ -161,7 +171,8 @@ static void get_buffer_size(const struct swaybg_output *output,
 	}
 }
 
-static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
+static void render_frame(struct swaybg_output *output, cairo_surface_t *surface,
+		RsvgHandle *svg) {
 	uint32_t buffer_width, buffer_height;
 	get_buffer_size(output, &buffer_width, &buffer_height);
 
@@ -169,7 +180,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 	struct wl_buffer *buf = NULL;
 	if (buffer_width != output->buffer_width ||
 			buffer_height != output->buffer_height) {
-		buf = draw_buffer(output, surface,
+		buf = draw_buffer(output, surface, svg,
 			buffer_width, buffer_height);
 		if (!buf) {
 			return;
@@ -660,28 +671,51 @@ int main(int argc, char **argv) {
 				continue;
 			}
 
-			cairo_surface_t *surface = load_background_image(image->path);
-			if (!surface) {
-				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
-				continue;
+			cairo_surface_t *surface = NULL;
+			RsvgHandle *svg = NULL;
+#if HAVE_RSVG
+			const char *suffix = strrchr(image->path, '.');
+			if (suffix && (!strcmp(suffix, ".svg") || !strcmp(suffix, ".SVG"))) {
+				GError *error = NULL;
+				svg = rsvg_handle_new_from_file(image->path, &error);
+				if (!svg) {
+					swaybg_log(LOG_ERROR, "Failed to load image: %s, %s", image->path, error->message);
+					continue;
+				}
+				rsvg_handle_set_dpi(svg, 96.0);
+#else
+			if (false) {
+#endif
+			} else {
+				svg = NULL;
+				surface = load_background_image(image->path);
+				if (!surface) {
+					swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
+					continue;
+				}
 			}
 
 			wl_list_for_each(output, &state.outputs, link) {
 				if (output->dirty && output->config->image == image) {
 					output->dirty = false;
-					render_frame(output, surface);
+					render_frame(output, surface, svg);
 				}
 			}
 
 			image->load_required = false;
-			cairo_surface_destroy(surface);
+			if (surface) {
+				cairo_surface_destroy(surface);
+			}
+			if (svg) {
+				g_object_unref(svg);
+			}
 		}
 
 		// Redraw outputs without associated image
 		wl_list_for_each(output, &state.outputs, link) {
 			if (output->dirty) {
 				output->dirty = false;
-				render_frame(output, NULL);
+				render_frame(output, NULL, NULL);
 			}
 		}
 	}
