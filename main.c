@@ -290,6 +290,14 @@ static void create_layer_surface(struct swaybg_output *output) {
 	wl_surface_set_input_region(output->surface, input_region);
 	wl_region_destroy(input_region);
 
+	// Set opaque regions.
+	struct wl_region *opaque_region =
+		wl_compositor_create_region(output->state->compositor);
+	assert(opaque_region);
+	wl_region_add(opaque_region, 0, 0, output->buffer_width, output->buffer_height);
+	wl_surface_set_opaque_region(output->surface, opaque_region);
+	wl_region_destroy(opaque_region);
+
 	if (output->state->fract_scale_manager) {
 		output->fract_scale = wp_fractional_scale_manager_v1_get_fractional_scale(
 			output->state->fract_scale_manager, output->surface);
