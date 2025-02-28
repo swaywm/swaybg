@@ -1,6 +1,8 @@
 #include <assert.h>
+#if HAVE_GLYCIN
+#include <glycin-2/glycin.h>
+#endif
 #include "background-image.h"
-#include "cairo_util.h"
 #include "log.h"
 
 enum background_mode parse_background_mode(const char *mode) {
@@ -21,40 +23,126 @@ enum background_mode parse_background_mode(const char *mode) {
 	return BACKGROUND_MODE_INVALID;
 }
 
+#if HAVE_GLYCIN
 cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *image;
-#if HAVE_GDK_PIXBUF
-	GError *err = NULL;
-	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
-	if (!pixbuf) {
-		swaybg_log(LOG_ERROR, "Failed to load background image (%s).",
-				err->message);
+	cairo_surface_t *surface = NULL;
+
+	GFile *file = g_file_new_for_path (path);
+	if (!file) {
+		swaybg_log(LOG_ERROR, "Failed to read background image at '%s'.", path);
 		return NULL;
 	}
-	// Correct for embedded image orientation; typical images are not
-	// rotated and will be handled efficiently
-	GdkPixbuf *oriented = gdk_pixbuf_apply_embedded_orientation(pixbuf);
-	g_object_unref(pixbuf);
-	image = gdk_cairo_image_surface_create_from_pixbuf(oriented);
-	g_object_unref(oriented);
+	GlyLoader *loader = gly_loader_new (file);
+	if (!loader) {
+		swaybg_log(LOG_ERROR, "Failed to create image loader for '%s'.", path);
+		goto err_after_file;
+	}
+	gly_loader_set_sandbox_selector(loader, GLY_SANDBOX_SELECTOR_AUTO);
+
+	GlyMemoryFormatSelection formats = GLY_MEMORY_SELECTION_B8G8R8A8_PREMULTIPLIED;
+	gly_loader_set_accepted_memory_formats(loader, formats);
+
+	GError *error = NULL;
+	GlyImage *image = gly_loader_load(loader, &error);
+	if (!image) {
+		swaybg_log(LOG_ERROR, "Failed to load image '%s': %s", path, error->message);
+		g_error_free(error);
+		goto err_after_loader;
+	}
+
+	GlyFrame *frame = gly_image_next_frame(image, &error);
+	if (!frame) {
+		swaybg_log(LOG_ERROR, "Failed to load primary frame of image '%s': %s",
+			path, error->message);
+		g_error_free(error);
+		goto err_after_image;
+	}
+	GlyMemoryFormat format = gly_frame_get_memory_format(frame);
+	assert(format == GLY_MEMORY_B8G8R8A8_PREMULTIPLIED);
+
+	uint32_t width = gly_frame_get_width(frame);
+	uint32_t height = gly_frame_get_height(frame);
+	assert(width > 0 && height > 0);
+
+	uint32_t gly_stride = gly_frame_get_stride(frame);
+	GBytes *bytes = gly_frame_get_buf_bytes(frame);
+	gsize size = 0;
+	const uint8_t *gly_data = (const uint8_t *)g_bytes_get_data(bytes, &size);
+
+	if (width > INT_MAX || height > INT_MAX) {
+		swaybg_log(LOG_ERROR,
+			"Image dimensions %"PRIu32" x %"PRIu32" too large for cairo",
+			width, height);
+		goto err_after_frame;
+	}
+
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (!surface) {
+		swaybg_log(LOG_ERROR,
+			"Failed to create cairo surface of size %"PRIu32" x %"PRIu32,
+			width, height);
+		goto err_after_frame;
+	}
+
+	unsigned char *cairo_data = cairo_image_surface_get_data(surface);
+	int cairo_stride = cairo_image_surface_get_stride(surface);
+
+	cairo_surface_flush (surface);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(surface);
+		surface = NULL;
+		swaybg_log(LOG_ERROR, "Failed to flush cairo surface");
+		goto err_after_frame;
+	}
+
+	// Convert GLY_MEMORY_B8G8R8A8_PREMULTIPLIED (whose channel order is
+	// endianness independent) with CAIRO_FORMAT_ARGB32 (native endian uint32_t,
+	// premultiplied).
+	for (int y = 0; y < (int)height; y++) {
+		for (int x = 0; x < (int)width; x++) {
+			uint32_t *dst = (uint32_t *)&cairo_data[cairo_stride * y + x * 4];
+			const uint8_t *src  = (const uint8_t*)&gly_data[gly_stride * y + x * 4];
+			*dst = ((uint32_t)src[0] << 0) | ((uint32_t)src[1] << 8)
+				| ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
+		}
+	}
+
+	cairo_surface_mark_dirty(surface);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(surface);
+		surface = NULL;
+		swaybg_log(LOG_ERROR, "Failed to mark cairo surface dirty");
+		goto err_after_frame;
+	}
+
+err_after_frame:
+	g_object_unref(frame);
+err_after_image:
+	g_object_unref(image);
+err_after_loader:
+	g_object_unref(loader);
+err_after_file:
+	g_object_unref(file);
+	return surface;
+}
+
 #else
-	image = cairo_image_surface_create_from_png(path);
-#endif // HAVE_GDK_PIXBUF
+cairo_surface_t *load_background_image(const char *path) {
+	cairo_surface_t *image = cairo_image_surface_create_from_png(path);
 	if (!image) {
 		swaybg_log(LOG_ERROR, "Failed to read background image.");
 		return NULL;
 	}
 	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
 		swaybg_log(LOG_ERROR, "Failed to read background image: %s."
-#if !HAVE_GDK_PIXBUF
-				"\nSway was compiled without gdk_pixbuf support, so only"
-				"\nPNG images can be loaded. This is the likely cause."
-#endif // !HAVE_GDK_PIXBUF
-				, cairo_status_to_string(cairo_surface_status(image)));
+			"\nSway was compiled without glycin support, so only"
+			"\nPNG images can be loaded. This is the likely cause.",
+			cairo_status_to_string(cairo_surface_status(image)));
 		return NULL;
 	}
 	return image;
 }
+#endif
 
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		enum background_mode mode, int buffer_width, int buffer_height) {
