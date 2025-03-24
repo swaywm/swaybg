@@ -123,3 +123,95 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 	cairo_paint(cairo);
 	cairo_restore(cairo);
 }
+
+#if HAVE_RSVG
+void render_background_image_svg(cairo_t *cairo, RsvgHandle *svg,
+		enum background_mode mode, int buffer_width, int buffer_height) {
+	gdouble nat_width, nat_height;
+	if (!rsvg_handle_get_intrinsic_size_in_pixels(svg, &nat_width, &nat_height)) {
+		nat_width = buffer_width;
+		nat_height = buffer_height;
+	}
+	RsvgRectangle viewport;
+	GError *error = NULL;;
+	switch (mode) {
+	case BACKGROUND_MODE_STRETCH:
+		viewport.x = 0;
+		viewport.y = 0;
+		viewport.width = nat_width;
+		viewport.height = nat_height;
+		cairo_scale(cairo, buffer_width / nat_width, buffer_height / nat_height);
+		rsvg_handle_render_document(svg, cairo, &viewport, &error);
+		break;
+	case BACKGROUND_MODE_FILL: {
+		double window_ratio = (double)buffer_width / buffer_height;
+		double bg_ratio = nat_width / nat_height;
+
+		if (window_ratio > bg_ratio) {
+			double scale = (double)buffer_width / nat_width;
+
+			viewport.x = 0;
+			viewport.y = (double)buffer_height / 2 - scale * nat_height / 2;
+			viewport.width = buffer_width;
+			viewport.height = scale * nat_height;
+		} else {
+			double scale = (double)buffer_height / nat_height;
+
+			viewport.x = (double)buffer_width / 2 - scale *nat_width / 2;
+			viewport.y = 0;
+			viewport.width = scale * nat_width;
+			viewport.height = buffer_height;
+		}
+
+		rsvg_handle_render_document(svg, cairo, &viewport, &error);
+		break;
+	}
+	case BACKGROUND_MODE_FIT: {
+		double window_ratio = (double)buffer_width / buffer_height;
+		double bg_ratio =  nat_width / nat_height;
+
+		if (window_ratio < bg_ratio) {
+			double scale = (double)buffer_width / nat_width;
+
+			viewport.x = 0;
+			viewport.y = (double)buffer_height / 2 - scale * nat_height / 2;
+			viewport.width = buffer_width;
+			viewport.height = scale * nat_height;
+		} else {
+			double scale = (double)buffer_height / nat_height;
+
+			viewport.x = (double)buffer_width / 2 - scale * nat_width / 2;
+			viewport.y = 0;
+			viewport.width = scale * nat_width;
+			viewport.height = buffer_height;
+		}
+		rsvg_handle_render_document(svg, cairo, &viewport, &error);
+		break;
+	}
+	case BACKGROUND_MODE_CENTER: {
+		viewport.x = (double)buffer_width / 2 - nat_width / 2;
+		viewport.y = (double)buffer_height / 2 - nat_height / 2;
+		viewport.width = nat_width;
+		viewport.height = nat_height;
+		rsvg_handle_render_document(svg, cairo, &viewport, &error);
+		break;
+	}
+	case BACKGROUND_MODE_TILE: {
+		for (int x = 0; x * nat_width < buffer_width; x++) {
+			for (int y = 0; y * nat_height < buffer_height; y++) {
+				viewport.x = nat_width * x;
+				viewport.y = nat_height * y;
+				viewport.width = nat_width;
+				viewport.height = nat_height;
+				rsvg_handle_render_document(svg, cairo, &viewport, &error);
+			}
+		}
+		break;
+	}
+	case BACKGROUND_MODE_SOLID_COLOR:
+	case BACKGROUND_MODE_INVALID:
+		assert(0);
+		break;
+	}
+}
+#endif
