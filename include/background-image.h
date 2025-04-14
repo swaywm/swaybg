@@ -12,8 +12,23 @@ enum background_mode {
 	BACKGROUND_MODE_INVALID,
 };
 
+/** CICP (coding-independent code point) values */
+struct cicp {
+	uint8_t primaries;
+	uint8_t transfer;
+	uint8_t matrix;
+	uint8_t range;
+};
+
+struct background_image {
+	cairo_surface_t *cairo_surface;
+	struct cicp cicp;
+	bool has_cicp;
+};
+
 enum background_mode parse_background_mode(const char *mode);
-cairo_surface_t *load_background_image(const char *path);
+/** On success, this returns true and fills *image. */
+bool load_background_image(const char *path, struct background_image *image);
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		enum background_mode mode, int buffer_width, int buffer_height);
 
