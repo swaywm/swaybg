@@ -30,6 +30,9 @@ these options.
 	the additional mode _solid\_color_ to display only the background color,
 	even if a background image is specified.
 
+*-n, --namespace* <name>
+	Namespace to use for the layer shell surface. Defaults to "wallpaper".
+
 *-o, --output* <name>
 	Select an output to configure. Subsequent appearance options will only
 	apply to this output. The special value _\*_ selects all outputs.
