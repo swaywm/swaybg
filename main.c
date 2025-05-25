@@ -64,6 +64,7 @@ struct swaybg_image {
 struct swaybg_output_config {
 	char *output;
 	const char *image_path;
+	const char *layer_name;
 	struct swaybg_image *image;
 	enum background_mode mode;
 	uint32_t color;
@@ -307,7 +308,7 @@ static void create_layer_surface(struct swaybg_output *output) {
 
 	output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
 			output->state->layer_shell, output->surface, output->wl_output,
-			ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "wallpaper");
+			ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, output->config->layer_name);
 	assert(output->layer_surface);
 
 	zwlr_layer_surface_v1_set_size(output->layer_surface, 0, 0);
@@ -479,6 +480,7 @@ static void parse_command_line(int argc, char **argv,
 		{"color", required_argument, NULL, 'c'},
 		{"help", no_argument, NULL, 'h'},
 		{"image", required_argument, NULL, 'i'},
+		{"layer", required_argument, NULL, 'i'},
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
 		{"version", no_argument, NULL, 'v'},
@@ -491,6 +493,7 @@ static void parse_command_line(int argc, char **argv,
 		"  -c, --color RRGGBB     Set the background color.\n"
 		"  -h, --help             Show help message and quit.\n"
 		"  -i, --image <path>     Set the image to display.\n"
+		"  -l, --layer <name>     Set the layer name to display the wallpaper. Defaults to `wallpaper`.\n"
 		"  -m, --mode <mode>      Set the mode to use for the image.\n"
 		"  -o, --output <name>    Set the output to operate on or * for all.\n"
 		"  -v, --version          Show the version number and quit.\n"
@@ -499,6 +502,7 @@ static void parse_command_line(int argc, char **argv,
 		"  stretch, fit, fill, center, tile, or solid_color\n";
 
 	struct swaybg_output_config *config = calloc(1, sizeof(struct swaybg_output_config));
+	config->layer_name = strdup("wallpaper");
 	config->output = strdup("*");
 	config->mode = BACKGROUND_MODE_INVALID;
 	wl_list_init(&config->link); // init for safe removal
@@ -506,7 +510,7 @@ static void parse_command_line(int argc, char **argv,
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:l:m:o:v", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -520,6 +524,9 @@ static void parse_command_line(int argc, char **argv,
 			break;
 		case 'i':  // image
 			config->image_path = optarg;
+			break;
+		case 'l':  // layer
+			config->layer_name = optarg;
 			break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
