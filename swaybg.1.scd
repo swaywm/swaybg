@@ -26,9 +26,9 @@ these options.
 	Set the background image.
 
 *-m, --mode* <mode>
-	Scaling mode for images: _stretch_, _fill_, _fit_, _center_, or _tile_. Use
-	the additional mode _solid\_color_ to display only the background color,
-	even if a background image is specified.
+	Scaling mode for images: _stretch_, _fill_, _fit_, _center_, or _tile_.
+	Default is _stretch_. Use the additional mode _solid\_color_ to display
+	only the background color, even if a background image is specified.
 
 *-o, --output* <name>
 	Select an output to configure. Subsequent appearance options will only
