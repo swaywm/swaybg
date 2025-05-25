@@ -25,6 +25,9 @@ these options.
 *-i, --image* <path>
 	Set the background image.
 
+*-l, --layer* <name>
+	Set the layer name to display the wallpaper. Defaults to `wallpaper`.
+
 *-m, --mode* <mode>
 	Scaling mode for images: _stretch_, _fill_, _fit_, _center_, or _tile_.
 	Default is _stretch_. Use the additional mode _solid\_color_ to display
