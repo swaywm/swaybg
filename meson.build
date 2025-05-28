@@ -34,6 +34,7 @@ wayland_protos = dependency('wayland-protocols', version: '>=1.31')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
 cairo = dependency('cairo')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
+png = dependency('libpng')
 
 git = find_program('git', required: false, native: true)
 scdoc = find_program('scdoc', required: get_option('man-pages'), native: true)
@@ -77,6 +78,7 @@ protos_src = []
 client_protocols = [
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
 	wl_protocol_dir / 'stable/viewporter/viewporter.xml',
+	wl_protocol_dir / 'staging/color-management/color-management-v1.xml',
 	wl_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
 	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
 	'wlr-layer-shell-unstable-v1.xml',
@@ -100,8 +102,9 @@ executable(
 	include_directories: 'include',
 	dependencies: [
 		cairo,
-		rt,
 		gdk_pixbuf,
+		png,
+		rt,
 		wayland_client,
 	],
 	install: true
