@@ -24,13 +24,13 @@ enum background_mode parse_background_mode(const char *mode) {
 }
 
 #if HAVE_GLYCIN
-cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *surface = NULL;
+bool load_background_image(const char *path, struct background_image *image) {
+	bool success = false;
 
 	GFile *file = g_file_new_for_path (path);
 	if (!file) {
 		swaybg_log(LOG_ERROR, "Failed to read background image at '%s'.", path);
-		return NULL;
+		return false;
 	}
 	GlyLoader *loader = gly_loader_new (file);
 	if (!loader) {
@@ -43,14 +43,14 @@ cairo_surface_t *load_background_image(const char *path) {
 	gly_loader_set_accepted_memory_formats(loader, formats);
 
 	GError *error = NULL;
-	GlyImage *image = gly_loader_load(loader, &error);
-	if (!image) {
+	GlyImage *gly_image = gly_loader_load(loader, &error);
+	if (!gly_image) {
 		swaybg_log(LOG_ERROR, "Failed to load image '%s': %s", path, error->message);
 		g_error_free(error);
 		goto err_after_loader;
 	}
 
-	GlyFrame *frame = gly_image_next_frame(image, &error);
+	GlyFrame *frame = gly_image_next_frame(gly_image, &error);
 	if (!frame) {
 		swaybg_log(LOG_ERROR, "Failed to load primary frame of image '%s': %s",
 			path, error->message);
@@ -76,7 +76,7 @@ cairo_surface_t *load_background_image(const char *path) {
 		goto err_after_frame;
 	}
 
-	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
 	if (!surface) {
 		swaybg_log(LOG_ERROR,
 			"Failed to create cairo surface of size %"PRIu32" x %"PRIu32,
@@ -115,32 +115,49 @@ cairo_surface_t *load_background_image(const char *path) {
 		goto err_after_frame;
 	}
 
+	GlyCicp *cicp = gly_frame_get_color_cicp(frame);
+	if (cicp) {
+		image->has_cicp = true;
+		image->cicp.primaries = cicp->color_primaries;
+		image->cicp.transfer = cicp->transfer_characteristics;
+		image->cicp.matrix = cicp->matrix_coefficients;
+		image->cicp.range = cicp->video_full_range_flag;
+		gly_cicp_free(cicp);
+	} else {
+		image->has_cicp = false;
+	}
+
+	image->cairo_surface = surface;
+	success = true;
+
 err_after_frame:
 	g_object_unref(frame);
 err_after_image:
-	g_object_unref(image);
+	g_object_unref(gly_image);
 err_after_loader:
 	g_object_unref(loader);
 err_after_file:
 	g_object_unref(file);
-	return surface;
+	return success;
 }
 
 #else
-cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *image = cairo_image_surface_create_from_png(path);
-	if (!image) {
+bool load_background_image(const char *path, struct background_image *image) {
+	cairo_surface_t *surface = cairo_image_surface_create_from_png(path);
+	if (!surface) {
 		swaybg_log(LOG_ERROR, "Failed to read background image.");
-		return NULL;
+		return false;
 	}
-	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
 		swaybg_log(LOG_ERROR, "Failed to read background image: %s."
-			"\nSway was compiled without glycin support, so only"
+			"\nSwaybg was compiled without glycin support, so only"
 			"\nPNG images can be loaded. This is the likely cause.",
-			cairo_status_to_string(cairo_surface_status(image)));
-		return NULL;
+			cairo_status_to_string(cairo_surface_status(surface)));
+		return false;
 	}
-	return image;
+	image->cairo_surface = surface;
+	image->has_cicp = false;
+	return true;
 }
 #endif
 

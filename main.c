@@ -11,6 +11,7 @@
 #include "cairo_util.h"
 #include "log.h"
 #include "pool-buffer.h"
+#include "color-management-v1-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
@@ -41,6 +42,133 @@ static bool parse_color(const char *color, uint32_t *result) {
 	return true;
 }
 
+static bool parse_rendering_intent(const char *str, enum wp_color_manager_v1_render_intent *intent) {
+	enum wp_color_manager_v1_render_intent val = WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL;
+	if (strcmp(str, "perceptual") == 0) {
+		val = WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL;
+	} else if (strcmp(str, "relative") == 0) {
+		val = WP_COLOR_MANAGER_V1_RENDER_INTENT_RELATIVE;
+	} else if (strcmp(str, "saturation") == 0) {
+		val = WP_COLOR_MANAGER_V1_RENDER_INTENT_SATURATION;
+	} else if (strcmp(str, "absolute") == 0) {
+		val = WP_COLOR_MANAGER_V1_RENDER_INTENT_ABSOLUTE;
+	} else if (strcmp(str, "relative_bpc") == 0) {
+		val = WP_COLOR_MANAGER_V1_RENDER_INTENT_RELATIVE_BPC;
+	} else {
+		return false;
+	}
+	*intent = val;
+	return true;
+}
+
+
+static const char *rendering_intent_names[] = {
+	"perceptual",
+	"relative",
+	"saturation",
+	"absolute",
+	"relative_bpc",
+};
+
+/** Map CICP transfer code to the WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION enum
+ * (or 0 if no match). */
+uint32_t cicp_to_wl_tf(uint8_t transfer) {
+	switch (transfer) {
+	case 1:
+	case 6:
+	case 14:
+	case 15:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_BT1886;
+	case 2: // unspecified
+		return 0;
+	case 4:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA22;
+	case 5:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_GAMMA28;
+	case 7:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST240;
+	case 8: // this is an extension of tf=8 and will work on all tf=8 images
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_EXT_LINEAR;
+	case 9:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_LOG_100;
+	case 10:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_LOG_316;
+	case 12:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_XVYCC;
+	case 13: // swaybg only supports MatrixCoefficients = 0
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_SRGB;
+	case 16: // with reference white specified
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST2084_PQ;
+	case 17:
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_ST428;
+	case 18: // with reference white specified
+		return WP_COLOR_MANAGER_V1_TRANSFER_FUNCTION_HLG;
+	default:
+		return 0;
+	}
+}
+
+static const char *transfer_function_names[] = {
+	"unknown",
+	"bt1886",
+	"gamma22",
+	"gamma28",
+	"st240",
+	"ext_linear",
+	"log100",
+	"log316",
+	"xvycc",
+	"srgb",
+	"ext_srgb",
+	"st2084_pq",
+	"st428",
+	"hlg"
+};
+
+/** Map CICP primary code to the WP_COLOR_MANAGER_V1_PRIMARIES enum
+ * (or 0 if no match). */
+uint32_t cicp_to_wl_primaries(uint8_t primaries) {
+	switch (primaries) {
+	case 1:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_SRGB;
+	case 2: // unspecified
+		return 0;
+	case 4:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_PAL_M;
+	case 5:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_PAL;
+	case 6:
+	case 7:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_NTSC;
+	case 8:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_GENERIC_FILM;
+	case 9:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_BT2020;
+	case 10:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_CIE1931_XYZ;
+	case 11:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_DCI_P3;
+	case 12:
+		return WP_COLOR_MANAGER_V1_PRIMARIES_DISPLAY_P3;
+	default:
+		return 0;
+	}
+}
+
+static const char *primary_names[] = {
+	"unknown",
+	"srgb",
+	"pal_m",
+	"pam",
+	"ntsc",
+	"generic_film",
+	"bt2020",
+	"cie1931_xyz",
+	"dci_p3",
+	"display_p3",
+	"adobe_rgb",
+};
+
 struct swaybg_state {
 	struct wl_display *display;
 	struct wl_compositor *compositor;
@@ -49,10 +177,17 @@ struct swaybg_state {
 	struct wp_viewporter *viewporter;
 	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
 	struct wp_fractional_scale_manager_v1 *fract_scale_manager;
+	struct wp_color_manager_v1 *color_manager;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
 	bool run_display;
+	/* Color management features and capabilities */
+	bool has_parametric;
+	bool supported_intents[sizeof(rendering_intent_names) / sizeof(rendering_intent_names[0])];
+	bool supported_named_primaries[sizeof(primary_names) / sizeof(primary_names[0])];
+	bool supported_named_tfs[sizeof(transfer_function_names) / sizeof(transfer_function_names[0])];
+	bool color_info_done;
 };
 
 struct swaybg_image {
@@ -66,6 +201,7 @@ struct swaybg_output_config {
 	const char *image_path;
 	struct swaybg_image *image;
 	enum background_mode mode;
+	enum wp_color_manager_v1_render_intent rendering_intent;
 	uint32_t color;
 	struct wl_list link;
 };
@@ -83,6 +219,7 @@ struct swaybg_output {
 	struct zwlr_layer_surface_v1 *layer_surface;
 	struct wp_viewport *viewport;
 	struct wp_fractional_scale_v1 *fract_scale;
+	struct wp_color_management_surface_v1 *color_surface;
 
 	uint32_t width, height;
 	int32_t scale;
@@ -96,9 +233,34 @@ struct swaybg_output {
 	struct wl_list link;
 };
 
+
+enum image_desc_state {
+	IMAGE_DESC_WAITING,
+	IMAGE_DESC_READY,
+	IMAGE_DESC_FAILED,
+};
+
+static void image_desc_failed(void *data,
+		struct wp_image_description_v1 *wp_image_description_v1,
+		uint32_t cause, const char *msg) {
+	enum image_desc_state *state = data;
+	*state = IMAGE_DESC_FAILED;
+}
+
+static void image_desc_ready(void *data,
+		struct wp_image_description_v1 *wp_image_description_v1, uint32_t identity) {
+	enum image_desc_state *state = data;
+	*state = IMAGE_DESC_READY;
+}
+
+static const struct wp_image_description_v1_listener image_desc_listener = {
+	.failed = image_desc_failed,
+	.ready = image_desc_ready,
+};
+
 // Create a wl_buffer with the specified dimensions and content
 static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
-		cairo_surface_t *surface, uint32_t buffer_width, uint32_t buffer_height) {
+		const struct background_image *image, uint32_t buffer_width, uint32_t buffer_height) {
 	uint32_t bg_color = output->config->color ? output->config->color : 0x000000ff;
 
 	if (buffer_width == 1 && buffer_height == 1 &&
@@ -128,8 +290,8 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 	cairo_set_source_u32(cairo, bg_color);
 	cairo_paint(cairo);
 
-	if (surface) {
-		render_background_image(cairo, surface,
+	if (image && image->cairo_surface) {
+		render_background_image(cairo, image->cairo_surface,
 			output->config->mode, buffer_width, buffer_height);
 	}
 
@@ -161,7 +323,7 @@ static void get_buffer_size(const struct swaybg_output *output,
 	}
 }
 
-static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
+static void render_frame(struct swaybg_output *output, const struct background_image *image) {
 	uint32_t buffer_width, buffer_height;
 	get_buffer_size(output, &buffer_width, &buffer_height);
 
@@ -169,7 +331,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 	struct wl_buffer *buf = NULL;
 	if (buffer_width != output->buffer_width ||
 			buffer_height != output->buffer_height) {
-		buf = draw_buffer(output, surface,
+		buf = draw_buffer(output, image,
 			buffer_width, buffer_height);
 		if (!buf) {
 			return;
@@ -187,6 +349,91 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		wp_viewport_set_destination(output->viewport, output->width, output->height);
 	} else {
 		wl_surface_set_buffer_scale(output->surface, output->scale);
+	}
+
+	if (image && image->has_cicp && output->color_surface) {
+		bool supported = true;
+		uint32_t intent = output->config->rendering_intent;
+		uint32_t tf = cicp_to_wl_tf(image->cicp.transfer);
+		uint32_t primaries = cicp_to_wl_primaries(image->cicp.primaries);
+		if (image->cicp.matrix != 0) {
+			swaybg_log(LOG_ERROR, "Failed to create image description, CICP matrix = %d != 0=RGB", image->cicp.matrix);
+			supported = false;
+		}
+		if (image->cicp.range != 1) {
+			swaybg_log(LOG_ERROR, "Failed to create image description, CICP range = %d != 1=full", image->cicp.range);
+			supported = false;
+		}
+
+		if (intent >= sizeof(output->state->supported_intents) / sizeof(output->state->supported_intents[0])) {
+			swaybg_log(LOG_ERROR,
+				"Failed to create image description, rendering intent %d unknown",
+				intent);
+			supported = false;
+		} else if (!output->state->supported_intents[intent]) {
+			swaybg_log(LOG_ERROR,
+				"Failed to create image description, intent %d=%s not supported",
+				intent, rendering_intent_names[intent]);
+			supported = false;
+		}
+
+		if (tf >= sizeof(output->state->supported_named_tfs) / sizeof(output->state->supported_named_tfs[0])) {
+			swaybg_log(LOG_ERROR,
+				"Failed to create image description, named transfer function wl=%d, cicp=%d unknown",
+				tf, image->cicp.transfer);
+			supported = false;
+		} else if (!output->state->supported_named_tfs[tf]) {
+			swaybg_log(LOG_ERROR,
+				"Failed to create image description, named transfer function wl=%d=%s, cicp=%d not supported",
+				tf, transfer_function_names[tf], image->cicp.transfer);
+			supported = false;
+		}
+
+		if (primaries >= sizeof(output->state->supported_named_primaries) / sizeof(output->state->supported_named_primaries[0])) {
+			swaybg_log(LOG_ERROR,
+				"Failed to create image description, named primaries wl=%d, cicp=%d unknown",
+				primaries, image->cicp.primaries);
+			supported = false;
+		} else if (!output->state->supported_named_primaries[primaries]) {
+			swaybg_log(LOG_ERROR,
+				"Failed to create image description, named primaries wl=%d=%s, cicp=%d not supported",
+				primaries, primary_names[tf], image->cicp.primaries);
+			supported = false;
+		}
+
+		if (supported) {
+			struct wp_image_description_creator_params_v1 *params =
+			wp_color_manager_v1_create_parametric_creator(output->state->color_manager);
+			wp_image_description_creator_params_v1_set_primaries_named(params, primaries);
+			wp_image_description_creator_params_v1_set_tf_named(params, tf);
+
+			struct wp_image_description_v1 *desc =
+				wp_image_description_creator_params_v1_create(params);
+			enum image_desc_state state = IMAGE_DESC_WAITING;
+			wp_image_description_v1_add_listener(desc, &image_desc_listener, &state);
+
+			/* Block until image description is ready. This is of course slow;
+			 * image descriptions should instead be cached and asynchronously constructed. */
+			struct wl_event_queue *init_queue = wl_proxy_get_queue((struct wl_proxy *)desc);
+			struct wl_event_queue *queue = wl_display_create_queue_with_name(output->state->display, "image desc");
+			wl_proxy_set_queue((struct wl_proxy *)desc, queue);
+			while (state == IMAGE_DESC_WAITING) {
+				if (wl_display_dispatch_queue(output->state->display, queue) < 0) {
+					/* compositor disconnection, silently exit */
+					break;
+				}
+			}
+			wl_proxy_set_queue((struct wl_proxy *)desc, init_queue);
+			wl_event_queue_destroy(queue);
+
+			if (state == IMAGE_DESC_READY) {
+				wp_color_management_surface_v1_set_image_description(output->color_surface, desc, intent);
+			} else if (state == IMAGE_DESC_FAILED) {
+				swaybg_log(LOG_ERROR, "Failed to create image description, compositor sent ::failed() event");
+			}
+
+			wp_image_description_v1_destroy(desc);
+		}
 	}
 	wl_surface_commit(output->surface);
 	if (buf) {
@@ -227,6 +474,9 @@ static void destroy_swaybg_output(struct swaybg_output *output) {
 	}
 	if (output->fract_scale != NULL) {
 		wp_fractional_scale_v1_destroy(output->fract_scale);
+	}
+	if (output->color_surface != NULL) {
+		wp_color_management_surface_v1_destroy(output->color_surface);
 	}
 	wl_output_destroy(output->wl_output);
 	free(output->name);
@@ -303,6 +553,11 @@ static void create_layer_surface(struct swaybg_output *output) {
 				output->state->fract_scale_manager)) {
 		output->viewport =  wp_viewporter_get_viewport(
 			output->state->viewporter, output->surface);
+	}
+
+	if (output->state->color_manager) {
+		output->color_surface = wp_color_manager_v1_get_surface(
+			output->state->color_manager, output->surface);
 	}
 
 	output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
@@ -398,6 +653,53 @@ static const struct wl_output_listener output_listener = {
 	.description = output_description,
 };
 
+
+static void color_supported_intent(void *data,
+		struct wp_color_manager_v1 *wp_color_manager_v1, uint32_t render_intent) {
+	struct swaybg_state *state = data;
+	if (render_intent < sizeof(state->supported_intents) / sizeof(state->supported_intents[0])) {
+		state->supported_intents[render_intent] = true;
+	}
+}
+
+static void color_supported_feature(void *data,
+		struct wp_color_manager_v1 *wp_color_manager_v1, uint32_t feature) {
+	struct swaybg_state *state = data;
+	if (feature == WP_COLOR_MANAGER_V1_FEATURE_PARAMETRIC) {
+		state->has_parametric = true;
+	}
+}
+
+static void color_supported_tf_named(void *data,
+		struct wp_color_manager_v1 *wp_color_manager_v1, uint32_t tf) {
+	struct swaybg_state *state = data;
+	if (tf < sizeof(state->supported_named_tfs) / sizeof(state->supported_named_tfs[0])) {
+		state->supported_named_tfs[tf] = true;
+	}
+}
+
+static void color_supported_primaries_named(void *data,
+		struct wp_color_manager_v1 *wp_color_manager_v1, uint32_t primaries) {
+	struct swaybg_state *state = data;
+	if (primaries < sizeof(state->supported_named_primaries) / sizeof(state->supported_named_primaries[0])) {
+		state->supported_named_primaries[primaries] = true;
+	}
+}
+
+static void color_done(void *data,
+		struct wp_color_manager_v1 *wp_color_manager_v1) {
+	struct swaybg_state *state = data;
+	state->color_info_done = true;
+}
+
+static const struct wp_color_manager_v1_listener color_manager_listener = {
+	.supported_intent = color_supported_intent,
+	.supported_feature = color_supported_feature,
+	.supported_tf_named = color_supported_tf_named,
+	.supported_primaries_named = color_supported_primaries_named,
+	.done = color_done,
+};
+
 static void handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version) {
 	struct swaybg_state *state = data;
@@ -428,6 +730,11 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wp_fractional_scale_manager_v1_interface.name) == 0) {
 		state->fract_scale_manager = wl_registry_bind(registry, name,
 			&wp_fractional_scale_manager_v1_interface, 1);
+	} else if (strcmp(interface, wp_color_manager_v1_interface.name) == 0) {
+		state->color_manager = wl_registry_bind(registry, name,
+			&wp_color_manager_v1_interface, 1);
+		wp_color_manager_v1_add_listener(state->color_manager,
+			&color_manager_listener, state);
 	}
 }
 
@@ -479,6 +786,7 @@ static void parse_command_line(int argc, char **argv,
 		{"color", required_argument, NULL, 'c'},
 		{"help", no_argument, NULL, 'h'},
 		{"image", required_argument, NULL, 'i'},
+		{"render", required_argument, NULL, 'r'},
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
 		{"version", no_argument, NULL, 'v'},
@@ -492,11 +800,14 @@ static void parse_command_line(int argc, char **argv,
 		"  -h, --help             Show help message and quit.\n"
 		"  -i, --image <path>     Set the image to display.\n"
 		"  -m, --mode <mode>      Set the mode to use for the image.\n"
+		"  -r, --render <intent>  Set the rendering intent to use if the image is color managed.\n"
 		"  -o, --output <name>    Set the output to operate on or * for all.\n"
 		"  -v, --version          Show the version number and quit.\n"
 		"\n"
 		"Background Modes:\n"
-		"  stretch, fit, fill, center, tile, or solid_color\n";
+		"  stretch, fit, fill, center, tile, or solid_color\n"
+		"Rendering intents (default=perceptual):\n"
+		"  perceptual, relative, saturation, absolute, relative_bpc\n";
 
 	struct swaybg_output_config *config = calloc(1, sizeof(struct swaybg_output_config));
 	config->output = strdup("*");
@@ -506,7 +817,7 @@ static void parse_command_line(int argc, char **argv,
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:m:o:r:v", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -535,7 +846,13 @@ static void parse_command_line(int argc, char **argv,
 			config = calloc(1, sizeof(struct swaybg_output_config));
 			config->output = strdup(optarg);
 			config->mode = BACKGROUND_MODE_INVALID;
+			config->rendering_intent = WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL;
 			wl_list_init(&config->link);  // init for safe removal
+			break;
+		case 'r':  // render
+			if (!parse_rendering_intent(optarg, &config->rendering_intent)) {
+				swaybg_log(LOG_ERROR, "Invalid rendering intent: %s", optarg);
+			}
 			break;
 		case 'v':  // version
 			fprintf(stdout, "swaybg version " SWAYBG_VERSION "\n");
@@ -632,6 +949,16 @@ int main(int argc, char **argv) {
 	}
 
 	state.run_display = true;
+
+	/* Before processing any images, wait to see what color management
+	 * supports, as this can affect what error messages are produced */
+	while (state.color_manager && !state.color_info_done && state.run_display) {
+		if (wl_display_dispatch(state.display) == -1) {
+			state.run_display = false;
+			break;
+		}
+	}
+
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
 		// Send acks, and determine which images need to be loaded
 		struct swaybg_output *output;
@@ -660,8 +987,8 @@ int main(int argc, char **argv) {
 				continue;
 			}
 
-			cairo_surface_t *surface = load_background_image(image->path);
-			if (!surface) {
+			struct background_image bg = {0};
+			if (!load_background_image(image->path, &bg)) {
 				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
 				continue;
 			}
@@ -669,12 +996,12 @@ int main(int argc, char **argv) {
 			wl_list_for_each(output, &state.outputs, link) {
 				if (output->dirty && output->config->image == image) {
 					output->dirty = false;
-					render_frame(output, surface);
+					render_frame(output, &bg);
 				}
 			}
 
 			image->load_required = false;
-			cairo_surface_destroy(surface);
+			cairo_surface_destroy(bg.cairo_surface);
 		}
 
 		// Redraw outputs without associated image
@@ -699,6 +1026,10 @@ int main(int argc, char **argv) {
 	struct swaybg_image *tmp_image;
 	wl_list_for_each_safe(image, tmp_image, &state.images, link) {
 		destroy_swaybg_image(image);
+	}
+
+	if (state.color_manager) {
+		wp_color_manager_v1_destroy(state.color_manager);
 	}
 
 	return 0;
