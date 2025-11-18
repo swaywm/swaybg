@@ -64,6 +64,7 @@ struct swaybg_image {
 struct swaybg_output_config {
 	char *output;
 	const char *image_path;
+	char *namespace;
 	struct swaybg_image *image;
 	enum background_mode mode;
 	uint32_t color;
@@ -279,7 +280,7 @@ static void output_mode(void *data, struct wl_output *output, uint32_t flags,
 	// Who cares
 }
 
-static void create_layer_surface(struct swaybg_output *output) {
+static void create_layer_surface(struct swaybg_output *output, char *namespace) {
 	output->surface = wl_compositor_create_surface(output->state->compositor);
 	assert(output->surface);
 
@@ -307,7 +308,7 @@ static void create_layer_surface(struct swaybg_output *output) {
 
 	output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
 			output->state->layer_shell, output->surface, output->wl_output,
-			ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "wallpaper");
+			ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, namespace);
 	assert(output->layer_surface);
 
 	zwlr_layer_surface_v1_set_size(output->layer_surface, 0, 0);
@@ -331,7 +332,7 @@ static void output_done(void *data, struct wl_output *wl_output) {
 	} else if (!output->layer_surface) {
 		swaybg_log(LOG_DEBUG, "Found config %s for output %s (%s)",
 				output->config->output, output->name, output->identifier);
-		create_layer_surface(output);
+		create_layer_surface(output, output->config->namespace);
 	}
 }
 
@@ -480,6 +481,7 @@ static void parse_command_line(int argc, char **argv,
 		{"help", no_argument, NULL, 'h'},
 		{"image", required_argument, NULL, 'i'},
 		{"mode", required_argument, NULL, 'm'},
+		{"namespace", required_argument, NULL, 'n'},
 		{"output", required_argument, NULL, 'o'},
 		{"version", no_argument, NULL, 'v'},
 		{0, 0, 0, 0}
@@ -492,6 +494,7 @@ static void parse_command_line(int argc, char **argv,
 		"  -h, --help             Show help message and quit.\n"
 		"  -i, --image <path>     Set the image to display.\n"
 		"  -m, --mode <mode>      Set the mode to use for the image.\n"
+		"  -n, --namespace <name> Set the namespace to use for the layer shell surface.\n"
 		"  -o, --output <name>    Set the output to operate on or * for all.\n"
 		"  -v, --version          Show the version number and quit.\n"
 		"\n"
@@ -501,12 +504,13 @@ static void parse_command_line(int argc, char **argv,
 	struct swaybg_output_config *config = calloc(1, sizeof(struct swaybg_output_config));
 	config->output = strdup("*");
 	config->mode = BACKGROUND_MODE_INVALID;
+	config->namespace = "wallpaper";
 	wl_list_init(&config->link); // init for safe removal
 
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:m:n:o:v", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -526,6 +530,9 @@ static void parse_command_line(int argc, char **argv,
 			if (config->mode == BACKGROUND_MODE_INVALID) {
 				swaybg_log(LOG_ERROR, "Invalid mode: %s", optarg);
 			}
+			break;
+		case 'n':  // mode
+			config->namespace = optarg;
 			break;
 		case 'o':  // output
 			if (config && !store_swaybg_output_config(state, config)) {
