@@ -53,6 +53,8 @@ struct swaybg_state {
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
 	bool run_display;
+	bool has_xrgb2101010;
+	bool has_xbgr2101010;
 };
 
 struct swaybg_image {
@@ -117,10 +119,26 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 			r32, g32, b32, 0xFFFFFFFF);
 	}
 
+	bool deep_image = false;
+	if (surface) {
+		cairo_format_t fmt = cairo_image_surface_get_format(surface);
+		deep_image = deep_image || fmt == CAIRO_FORMAT_RGB30;
+#if CAIRO_VERSION >= CAIRO_VERSION_ENCODE(1, 17, 2)
+		deep_image = deep_image || fmt == CAIRO_FORMAT_RGB96F;
+		deep_image = deep_image || fmt == CAIRO_FORMAT_RGBA128F;
+#endif
+	}
+
+	uint32_t format = WL_SHM_FORMAT_XRGB8888;
+	if (deep_image && output->state->has_xrgb2101010) {
+		format = WL_SHM_FORMAT_XRGB2101010;
+	} else if (deep_image && output->state->has_xbgr2101010) {
+		format = WL_SHM_FORMAT_XBGR2101010;
+	}
 
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
-			buffer_width, buffer_height, WL_SHM_FORMAT_XRGB8888)) {
+			buffer_width, buffer_height, format)) {
 		return NULL;
 	}
 
@@ -131,6 +149,10 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 	if (surface) {
 		render_background_image(cairo, surface,
 			output->config->mode, buffer_width, buffer_height);
+	}
+
+	if (format == WL_SHM_FORMAT_XBGR2101010) {
+		cairo_rgb30_swap_rb(buffer.surface);
 	}
 
 	// return wl_buffer for caller to use and destroy
@@ -398,6 +420,21 @@ static const struct wl_output_listener output_listener = {
 	.description = output_description,
 };
 
+
+static void shm_format(void *data, struct wl_shm *wl_shm, uint32_t format) {
+	struct swaybg_state *state = data;
+	if (format == WL_SHM_FORMAT_XBGR2101010) {
+		state->has_xbgr2101010 = true;
+	}
+	if (format == WL_SHM_FORMAT_XRGB2101010) {
+		state->has_xrgb2101010 = true;
+	}
+}
+
+static const struct wl_shm_listener shm_listener = {
+	.format = shm_format,
+};
+
 static void handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version) {
 	struct swaybg_state *state = data;
@@ -406,6 +443,7 @@ static void handle_global(void *data, struct wl_registry *registry,
 			wl_registry_bind(registry, name, &wl_compositor_interface, 4);
 	} else if (strcmp(interface, wl_shm_interface.name) == 0) {
 		state->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+		wl_shm_add_listener(state->shm, &shm_listener, state);
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
 		struct swaybg_output *output = calloc(1, sizeof(struct swaybg_output));
 		output->state = state;
