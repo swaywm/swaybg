@@ -5,6 +5,7 @@
 enum background_mode {
 	BACKGROUND_MODE_STRETCH,
 	BACKGROUND_MODE_FILL,
+	BACKGROUND_MODE_SPAN,
 	BACKGROUND_MODE_FIT,
 	BACKGROUND_MODE_CENTER,
 	BACKGROUND_MODE_TILE,
@@ -15,6 +16,10 @@ enum background_mode {
 enum background_mode parse_background_mode(const char *mode);
 cairo_surface_t *load_background_image(const char *path);
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
-		enum background_mode mode, int buffer_width, int buffer_height);
+		enum background_mode mode, int buffer_width, int buffer_height,
+		int screen_pos_x_mm, int screen_pos_y_mm, 
+		int width_mm, int height_mm,
+		int total_width_mm, int total_height_mm,
+		int min_width_mm, int min_height_mm);
 
 #endif

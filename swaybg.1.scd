@@ -26,9 +26,16 @@ these options.
 	Set the background image.
 
 *-m, --mode* <mode>
-	Scaling mode for images: _stretch_, _fill_, _fit_, _center_, or _tile_.
-	Default is _stretch_. Use the additional mode _solid\_color_ to display
-	only the background color, even if a background image is specified.
+	Scaling mode for images: _stretch_, _fill_, _fit_, _center_, _tile_, _span_ or _solid_color_.
+
+	The scaling modes are as follows:
+	- _stretch_ (default): Stretches the image to fit the entire screen.
+	- _fill_: Scales the image while maintaining its aspect ratio to fill the entire screen.
+	- _fit_: Scales the image while maintaining its aspect ratio to fit within the screen without cropping.
+	- _center_: Centers the image on the screen without scaling.
+	- _tile_: Repeats the image across the screen.
+	- _span_: Same as stretch but preserves aspect ratio by adding padding around the image.
+	- _solid_color_: Displays only the background color, ignoring any specified image.
 
 *-o, --output* <name>
 	Select an output to configure. Subsequent appearance options will only

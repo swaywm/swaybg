@@ -38,3 +38,6 @@ Run these commands:
     meson build/
     ninja -C build/
     sudo ninja -C build/ install
+
+## License
+swaybg is licensed under the MIT license. See [LICENSE](LICENSE) for details

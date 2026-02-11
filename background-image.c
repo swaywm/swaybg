@@ -8,6 +8,8 @@ enum background_mode parse_background_mode(const char *mode) {
 		return BACKGROUND_MODE_STRETCH;
 	} else if (strcmp(mode, "fill") == 0) {
 		return BACKGROUND_MODE_FILL;
+	} else if (strcmp(mode, "span") == 0) {
+		return BACKGROUND_MODE_SPAN;
 	} else if (strcmp(mode, "fit") == 0) {
 		return BACKGROUND_MODE_FIT;
 	} else if (strcmp(mode, "center") == 0) {
@@ -57,7 +59,11 @@ cairo_surface_t *load_background_image(const char *path) {
 }
 
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
-		enum background_mode mode, int buffer_width, int buffer_height) {
+		enum background_mode mode, int buffer_width, int buffer_height,
+	    int screen_pos_x_mm, int screen_pos_y_mm, 
+		int screen_width_mm, int screen_height_mm,
+		int screen_total_width_mm, int screen_total_height_mm,
+		int min_width_mm, int min_height_mm) {
 	double width = cairo_image_surface_get_width(image);
 	double height = cairo_image_surface_get_height(image);
 
@@ -68,6 +74,21 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 				(double)buffer_width / width,
 				(double)buffer_height / height);
 		cairo_set_source_surface(cairo, image, 0, 0);
+		break;
+	case BACKGROUND_MODE_SPAN:
+        // Calculate the portion of the image to display based on screen position and size
+		double img_x = ((double)screen_pos_x_mm / screen_total_width_mm) * width;
+		double img_y = ((double)screen_pos_y_mm / screen_total_height_mm) * height;
+		double img_portion_w = ((double)screen_width_mm / screen_total_width_mm) * width;
+		double scale = img_portion_w / buffer_width;
+
+		// center on image top 1/3 - to be tuned in the future
+        if (fabs(img_y) <= 1e-6) {
+			img_y = (height - min_height_mm/screen_total_width_mm*height) / 3;
+		}
+
+		cairo_scale(cairo, 1/scale, 1/scale);
+		cairo_set_source_surface(cairo, image, -img_x, -img_y);
 		break;
 	case BACKGROUND_MODE_FILL: {
 		double window_ratio = (double)buffer_width / buffer_height;

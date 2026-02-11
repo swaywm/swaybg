@@ -7,6 +7,7 @@
 #include <string.h>
 #include <strings.h>
 #include <wayland-client.h>
+#include <xdg-output-unstable-v1-client-protocol.h>
 #include "background-image.h"
 #include "cairo_util.h"
 #include "log.h"
@@ -49,10 +50,13 @@ struct swaybg_state {
 	struct wp_viewporter *viewporter;
 	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
 	struct wp_fractional_scale_manager_v1 *fract_scale_manager;
+	struct zxdg_output_manager_v1* om;
 	struct wl_list configs;  // struct swaybg_output_config::link
 	struct wl_list outputs;  // struct swaybg_output::link
 	struct wl_list images;   // struct swaybg_image::link
 	bool run_display;
+	uint32_t whole_width_mm, whole_height_mm;
+	uint32_t min_width_mm, min_height_mm;
 };
 
 struct swaybg_image {
@@ -85,6 +89,9 @@ struct swaybg_output {
 	struct wp_fractional_scale_v1 *fract_scale;
 
 	uint32_t width, height;
+	uint32_t width_mm, height_mm;
+	uint32_t x, y;
+	uint32_t x_mm, y_mm;
 	int32_t scale;
 	uint32_t pref_fract_scale;
 
@@ -130,7 +137,10 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 
 	if (surface) {
 		render_background_image(cairo, surface,
-			output->config->mode, buffer_width, buffer_height);
+			output->config->mode, buffer_width, buffer_height,
+			output->x_mm, output->y_mm, output->width_mm, output->height_mm,
+			output->state->whole_width_mm, output->state->whole_height_mm,
+			output->state->min_width_mm, output->state->min_height_mm);
 	}
 
 	// return wl_buffer for caller to use and destroy
@@ -268,10 +278,50 @@ static const struct wp_fractional_scale_v1_listener fract_scale_listener = {
 	.preferred_scale = fract_preferred_scale
 };
 
-static void output_geometry(void *data, struct wl_output *output, int32_t x,
+
+static void xdg_output_handle_logical_position(void *data,
+    struct zxdg_output_v1 *xdg_output, int32_t x, int32_t y) {
+    struct swaybg_output *output = data;
+	output->x = x;
+	output->y = y;
+}
+
+static void xdg_output_handle_logical_size(void *data,
+    struct zxdg_output_v1 *xdg_output, int32_t width, int32_t height) {
+    struct swaybg_output *output = data;
+	output->width = width;
+	output->height = height;
+}
+
+static void xdg_output_handle_name(void *data, struct zxdg_output_v1 *zxdg_output, const char *name) {
+	// not needed
+}
+
+static void xdg_output_handle_description(void *data, struct zxdg_output_v1 *zxdg_output, const char *description) {
+    // not needed
+}
+
+static void xdg_output_handle_done(void *data, struct zxdg_output_v1 *zxdg_output) {
+    // not needed
+}
+
+
+static const struct zxdg_output_v1_listener xdg_output_listener = {
+    .logical_position = xdg_output_handle_logical_position,
+    .logical_size = xdg_output_handle_logical_size,
+	.name = xdg_output_handle_name,
+	.description = xdg_output_handle_description,
+	.done = xdg_output_handle_done	
+};
+
+static void output_geometry(void *data, struct wl_output *wl_output, int32_t x,
 		int32_t y, int32_t width_mm, int32_t height_mm, int32_t subpixel,
 		const char *make, const char *model, int32_t transform) {
-	// Who cares
+	struct swaybg_output *output = data;
+	output->width_mm = width_mm;
+	output->height_mm = height_mm;
+	struct zxdg_output_v1 *xdg_output = zxdg_output_manager_v1_get_xdg_output(output->state->om, wl_output);
+	zxdg_output_v1_add_listener(xdg_output, &xdg_output_listener, data);
 }
 
 static void output_mode(void *data, struct wl_output *output, uint32_t flags,
@@ -412,9 +462,11 @@ static void handle_global(void *data, struct wl_registry *registry,
 		output->scale = 1;
 		output->wl_name = name;
 		output->wl_output =
-			wl_registry_bind(registry, name, &wl_output_interface, 4);
+		wl_registry_bind(registry, name, &wl_output_interface, 4);
 		wl_output_add_listener(output->wl_output, &output_listener, output);
-		wl_list_insert(&state->outputs, &output->link);
+		wl_list_insert(&state->outputs, &output->link);	
+	} else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0) {
+		state->om = wl_registry_bind(registry, name, &zxdg_output_manager_v1_interface, 1);
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		state->layer_shell =
 			wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, 1);
@@ -485,18 +537,24 @@ static void parse_command_line(int argc, char **argv,
 		{0, 0, 0, 0}
 	};
 
-	const char *usage =
-		"Usage: swaybg <options...>\n"
-		"\n"
-		"  -c, --color RRGGBB     Set the background color.\n"
-		"  -h, --help             Show help message and quit.\n"
-		"  -i, --image <path>     Set the image to display.\n"
-		"  -m, --mode <mode>      Set the mode to use for the image.\n"
-		"  -o, --output <name>    Set the output to operate on or * for all.\n"
-		"  -v, --version          Show the version number and quit.\n"
-		"\n"
-		"Background Modes:\n"
-		"  stretch, fit, fill, center, tile, or solid_color\n";
+    const char *usage =
+        "Usage: swaybg <options...>\n"
+        "\n"
+        "  -c, --color RRGGBB     Set the background color.\n"
+        "  -h, --help             Show help message and quit.\n"
+        "  -i, --image <path>     Set the image to display.\n"
+        "  -m, --mode <mode>      Set the mode to use for the image.\n"
+        "  -o, --output <name>    Set the output to operate on or * for all.\n"
+        "  -v, --version          Show the version number and quit.\n"
+        "\n"
+        "Background Modes:\n"
+        "  stretch                Scale the image to fill the screen, ignoring aspect ratio.\n"
+        "  fit                    Scale the image to fit the screen, maintaining aspect ratio.\n"
+        "  fill                   Scale the image to fill the screen, maintaining aspect ratio.\n"
+        "  center                 Center the image on the screen.\n"
+        "  tile                   Tile the image across the screen.\n"
+        "  span                   Span the image to fill accross monitors, based on monitors position and size.\n"
+        "  solid_color            Display only the background color, even if a background image is specified.\n";
 
 	struct swaybg_output_config *config = calloc(1, sizeof(struct swaybg_output_config));
 	config->output = strdup("*");
@@ -579,6 +637,90 @@ static void parse_command_line(int argc, char **argv,
 	}
 }
 
+
+
+int
+compare_pos_data_x (const void *a, const void *b)
+{
+  const struct swaybg_output*la = *(const struct swaybg_output**)a;
+  const struct swaybg_output*lb = *(const struct swaybg_output**)b;
+
+  return (la->x > lb->x) - (la->x < lb->x);
+}
+
+int
+compare_pos_data_y (const void *a, const void *b)
+{
+  const struct swaybg_output*la = *(const struct swaybg_output**)a;
+  const struct swaybg_output*lb = *(const struct swaybg_output**)b;
+
+  return (la->y > lb->y) - (la->y < lb->y);
+}
+
+/**
+ * Calculates the positions in millimeters of all outputs relative to each other.
+ *
+ * This function sorts the outputs by their x and y coordinates, calculates the
+ * pixel-to-millimeter ratio for each output based on the previous one, and updates
+ * the total width and height in millimeters for the entire display setup. It also
+ * determines the minimum width and height in millimeters across all outputs.
+ *
+ * @param state Pointer to the swaybg_state structure containing information about
+ *              all outputs and their configurations.
+ */
+void calc_pos_mm(struct swaybg_state *state) {
+    int num_outputs = wl_list_length(&state->outputs);
+    if (num_outputs <= 0) return;
+    
+    struct swaybg_output **pos_data = calloc(num_outputs, sizeof(struct swaybg_output*));
+    if (!pos_data) {
+        swaybg_log(LOG_ERROR, "Failed to allocate memory for pos_data");
+        return;
+    }
+
+    int i = 0;
+    struct swaybg_output *output;
+    wl_list_for_each(output, &state->outputs, link) {
+        pos_data[i] = output;
+        i++;
+    }
+    
+    // phase 1: sort by x position and calculate x_mm for each output based on the first output, and find max width in mm
+    qsort(pos_data, num_outputs, sizeof *pos_data, compare_pos_data_x);
+    
+    uint32_t max_width_mm = pos_data[0]->width_mm;
+    uint32_t min_width_mm = pos_data[0]->width_mm;
+    
+    for (int i = 1 ; i < num_outputs ; i++) {
+        double pixel_to_mm_ratio = (double)pos_data[i-1]->width_mm / pos_data[i-1]->width;
+        pos_data[i]->x_mm = pos_data[i-1]->x_mm + (pos_data[i]->x - pos_data[i-1]->x) * pixel_to_mm_ratio;
+		
+        max_width_mm = MAX(max_width_mm, pos_data[i]->width_mm);
+        min_width_mm = MIN(min_width_mm, pos_data[i]->width_mm);
+    }
+    
+    state->whole_width_mm = MAX(max_width_mm, pos_data[num_outputs-1]->x_mm + pos_data[num_outputs-1]->width_mm);
+    
+	// phase 2: sort by y position and calculate y_mm for each output based on the first output, and find max height in mm
+    qsort(pos_data, num_outputs, sizeof *pos_data, compare_pos_data_y);
+    
+    uint32_t max_height_mm = pos_data[0]->height_mm;
+    uint32_t min_height_mm = pos_data[0]->height_mm;
+    
+    for (int i = 1 ; i < num_outputs ; i++) {
+        double pixel_to_mm_ratio = (double)pos_data[i-1]->height_mm / pos_data[i-1]->height;
+        pos_data[i]->y_mm = pos_data[i-1]->y_mm + (pos_data[i]->y - pos_data[i-1]->y) * pixel_to_mm_ratio;
+        max_height_mm = MAX(max_height_mm, pos_data[i]->height_mm);
+        min_height_mm = MIN(min_height_mm, pos_data[i]->height_mm);
+    }
+    
+    state->whole_height_mm = MAX(max_height_mm, pos_data[num_outputs-1]->y_mm + pos_data[num_outputs-1]->height_mm);
+    state->min_width_mm = min_width_mm;
+    state->min_height_mm = min_height_mm;
+    free(pos_data);
+}
+
+
 int main(int argc, char **argv) {
 	swaybg_log_init(LOG_DEBUG);
 
@@ -632,6 +774,7 @@ int main(int argc, char **argv) {
 	}
 
 	state.run_display = true;
+
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
 		// Send acks, and determine which images need to be loaded
 		struct swaybg_output *output;
@@ -652,7 +795,7 @@ int main(int argc, char **argv) {
 					output->config->image->load_required = true;
 				}
 			}
-		}
+		}		
 
 		// Load images, render associated frames, and unload
 		wl_list_for_each(image, &state.images, link) {
@@ -665,6 +808,8 @@ int main(int argc, char **argv) {
 				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
 				continue;
 			}
+
+			calc_pos_mm(&state);
 
 			wl_list_for_each(output, &state.outputs, link) {
 				if (output->dirty && output->config->image == image) {
