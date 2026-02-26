@@ -1,6 +1,8 @@
 #include <assert.h>
+#if HAVE_GLYCIN
+#include <glycin-2/glycin.h>
+#endif
 #include "background-image.h"
-#include "cairo_util.h"
 #include "log.h"
 
 enum background_mode parse_background_mode(const char *mode) {
@@ -21,40 +23,143 @@ enum background_mode parse_background_mode(const char *mode) {
 	return BACKGROUND_MODE_INVALID;
 }
 
-cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *image;
-#if HAVE_GDK_PIXBUF
-	GError *err = NULL;
-	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
-	if (!pixbuf) {
-		swaybg_log(LOG_ERROR, "Failed to load background image (%s).",
-				err->message);
-		return NULL;
+#if HAVE_GLYCIN
+bool load_background_image(const char *path, struct background_image *image) {
+	bool success = false;
+
+	GFile *file = g_file_new_for_path (path);
+	if (!file) {
+		swaybg_log(LOG_ERROR, "Failed to read background image at '%s'.", path);
+		return false;
 	}
-	// Correct for embedded image orientation; typical images are not
-	// rotated and will be handled efficiently
-	GdkPixbuf *oriented = gdk_pixbuf_apply_embedded_orientation(pixbuf);
-	g_object_unref(pixbuf);
-	image = gdk_cairo_image_surface_create_from_pixbuf(oriented);
-	g_object_unref(oriented);
-#else
-	image = cairo_image_surface_create_from_png(path);
-#endif // HAVE_GDK_PIXBUF
-	if (!image) {
-		swaybg_log(LOG_ERROR, "Failed to read background image.");
-		return NULL;
+	GlyLoader *loader = gly_loader_new (file);
+	if (!loader) {
+		swaybg_log(LOG_ERROR, "Failed to create image loader for '%s'.", path);
+		goto err_after_file;
 	}
-	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
-		swaybg_log(LOG_ERROR, "Failed to read background image: %s."
-#if !HAVE_GDK_PIXBUF
-				"\nSway was compiled without gdk_pixbuf support, so only"
-				"\nPNG images can be loaded. This is the likely cause."
-#endif // !HAVE_GDK_PIXBUF
-				, cairo_status_to_string(cairo_surface_status(image)));
-		return NULL;
+	gly_loader_set_sandbox_selector(loader, GLY_SANDBOX_SELECTOR_AUTO);
+
+	GlyMemoryFormatSelection formats = GLY_MEMORY_SELECTION_B8G8R8A8_PREMULTIPLIED;
+	gly_loader_set_accepted_memory_formats(loader, formats);
+
+	GError *error = NULL;
+	GlyImage *gly_image = gly_loader_load(loader, &error);
+	if (!gly_image) {
+		swaybg_log(LOG_ERROR, "Failed to load image '%s': %s", path, error->message);
+		g_error_free(error);
+		goto err_after_loader;
 	}
-	return image;
+
+	GlyFrame *frame = gly_image_next_frame(gly_image, &error);
+	if (!frame) {
+		swaybg_log(LOG_ERROR, "Failed to load primary frame of image '%s': %s",
+			path, error->message);
+		g_error_free(error);
+		goto err_after_image;
+	}
+	GlyMemoryFormat format = gly_frame_get_memory_format(frame);
+	assert(format == GLY_MEMORY_B8G8R8A8_PREMULTIPLIED);
+
+	uint32_t width = gly_frame_get_width(frame);
+	uint32_t height = gly_frame_get_height(frame);
+	assert(width > 0 && height > 0);
+
+	uint32_t gly_stride = gly_frame_get_stride(frame);
+	GBytes *bytes = gly_frame_get_buf_bytes(frame);
+	gsize size = 0;
+	const uint8_t *gly_data = (const uint8_t *)g_bytes_get_data(bytes, &size);
+
+	if (width > INT_MAX || height > INT_MAX) {
+		swaybg_log(LOG_ERROR,
+			"Image dimensions %"PRIu32" x %"PRIu32" too large for cairo",
+			width, height);
+		goto err_after_frame;
+	}
+
+	cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+	if (!surface) {
+		swaybg_log(LOG_ERROR,
+			"Failed to create cairo surface of size %"PRIu32" x %"PRIu32,
+			width, height);
+		goto err_after_frame;
+	}
+
+	unsigned char *cairo_data = cairo_image_surface_get_data(surface);
+	int cairo_stride = cairo_image_surface_get_stride(surface);
+
+	cairo_surface_flush (surface);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(surface);
+		surface = NULL;
+		swaybg_log(LOG_ERROR, "Failed to flush cairo surface");
+		goto err_after_frame;
+	}
+
+	// Convert GLY_MEMORY_B8G8R8A8_PREMULTIPLIED (whose channel order is
+	// endianness independent) with CAIRO_FORMAT_ARGB32 (native endian uint32_t,
+	// premultiplied).
+	for (int y = 0; y < (int)height; y++) {
+		for (int x = 0; x < (int)width; x++) {
+			uint32_t *dst = (uint32_t *)&cairo_data[cairo_stride * y + x * 4];
+			const uint8_t *src  = (const uint8_t*)&gly_data[gly_stride * y + x * 4];
+			*dst = ((uint32_t)src[0] << 0) | ((uint32_t)src[1] << 8)
+				| ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
+		}
+	}
+
+	cairo_surface_mark_dirty(surface);
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		cairo_surface_destroy(surface);
+		surface = NULL;
+		swaybg_log(LOG_ERROR, "Failed to mark cairo surface dirty");
+		goto err_after_frame;
+	}
+
+	GlyCicp *cicp = gly_frame_get_color_cicp(frame);
+	if (cicp) {
+		image->has_cicp = true;
+		image->cicp.primaries = cicp->color_primaries;
+		image->cicp.transfer = cicp->transfer_characteristics;
+		image->cicp.matrix = cicp->matrix_coefficients;
+		image->cicp.range = cicp->video_full_range_flag;
+		gly_cicp_free(cicp);
+	} else {
+		image->has_cicp = false;
+	}
+
+	image->cairo_surface = surface;
+	success = true;
+
+err_after_frame:
+	g_object_unref(frame);
+err_after_image:
+	g_object_unref(gly_image);
+err_after_loader:
+	g_object_unref(loader);
+err_after_file:
+	g_object_unref(file);
+	return success;
 }
+
+#else
+bool load_background_image(const char *path, struct background_image *image) {
+	cairo_surface_t *surface = cairo_image_surface_create_from_png(path);
+	if (!surface) {
+		swaybg_log(LOG_ERROR, "Failed to read background image.");
+		return false;
+	}
+	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+		swaybg_log(LOG_ERROR, "Failed to read background image: %s."
+			"\nSwaybg was compiled without glycin support, so only"
+			"\nPNG images can be loaded. This is the likely cause.",
+			cairo_status_to_string(cairo_surface_status(surface)));
+		return false;
+	}
+	image->cairo_surface = surface;
+	image->has_cicp = false;
+	return true;
+}
+#endif
 
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		enum background_mode mode, int buffer_width, int buffer_height) {
