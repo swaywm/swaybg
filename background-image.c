@@ -22,28 +22,37 @@ enum background_mode parse_background_mode(const char *mode) {
 }
 
 cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *image;
+	cairo_surface_t *image = NULL;
+
 #if HAVE_GDK_PIXBUF
-	GError *err = NULL;
-	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
-	if (!pixbuf) {
-		swaybg_log(LOG_ERROR, "Failed to load background image (%s).",
-				err->message);
-		return NULL;
+	// Prefer to load PNG images with Cairo, since it can load images with
+	// higher bit depths at full precision
+	const char *suffix = strrchr(path, '.');
+	if (suffix && (!strcmp(suffix, ".png") || !strcmp(suffix, ".PNG"))) {
+		image = cairo_image_surface_create_from_png(path);
 	}
-	// Correct for embedded image orientation; typical images are not
-	// rotated and will be handled efficiently
-	GdkPixbuf *oriented = gdk_pixbuf_apply_embedded_orientation(pixbuf);
-	g_object_unref(pixbuf);
-	image = gdk_cairo_image_surface_create_from_pixbuf(oriented);
-	g_object_unref(oriented);
-#else
-	image = cairo_image_surface_create_from_png(path);
-#endif // HAVE_GDK_PIXBUF
+
+	// if not a PNG image, try to load with gdk-pixbuf
 	if (!image) {
-		swaybg_log(LOG_ERROR, "Failed to read background image.");
-		return NULL;
+		GError *err = NULL;
+		GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
+		if (!pixbuf) {
+			swaybg_log(LOG_ERROR, "Failed to load background image (%s).",
+					err->message);
+			return NULL;
+		}
+
+		// Correct for embedded image orientation; typical images are not
+		// rotated and will be handled efficiently
+		GdkPixbuf *oriented = gdk_pixbuf_apply_embedded_orientation(pixbuf);
+		g_object_unref(pixbuf);
+		image = gdk_cairo_image_surface_create_from_pixbuf(oriented);
+		g_object_unref(oriented);
 	}
+#else // !HAVE_GDK_PIXBUF
+	image = cairo_image_surface_create_from_png(path);
+#endif
+
 	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
 		swaybg_log(LOG_ERROR, "Failed to read background image: %s."
 #if !HAVE_GDK_PIXBUF

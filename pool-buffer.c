@@ -36,6 +36,18 @@ static int anonymous_shm_open(void) {
 	return -1;
 }
 
+static uint32_t cairo_format_from_wayland_shm(uint32_t shm) {
+	switch (shm) {
+	case WL_SHM_FORMAT_XRGB8888:
+		return CAIRO_FORMAT_RGB24;
+	case WL_SHM_FORMAT_XBGR2101010:
+	case WL_SHM_FORMAT_XRGB2101010:
+		return CAIRO_FORMAT_RGB30;
+	default:
+		assert(0);
+	}
+}
+
 bool create_buffer(struct pool_buffer *buf, struct wl_shm *shm,
 		int32_t width, int32_t height, uint32_t format) {
 	uint32_t stride = width * 4;
@@ -56,10 +68,11 @@ bool create_buffer(struct pool_buffer *buf, struct wl_shm *shm,
 	wl_shm_pool_destroy(pool);
 	close(fd);
 
+	cairo_format_t cairo_fmt = cairo_format_from_wayland_shm(format);
 	buf->size = size;
 	buf->data = data;
 	buf->surface = cairo_image_surface_create_for_data(data,
-			CAIRO_FORMAT_RGB24, width, height, stride);
+			cairo_fmt, width, height, stride);
 	buf->cairo = cairo_create(buf->surface);
 	return true;
 }
