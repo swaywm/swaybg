@@ -308,14 +308,8 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 		return NULL;
 	}
 
-	cairo_t *cairo = buffer.cairo;
-	cairo_set_source_u32(cairo, bg_color);
-	cairo_paint(cairo);
-
-	if (image && image->cairo_surface) {
-		render_background_image(cairo, image->cairo_surface,
-			output->config->mode, buffer_width, buffer_height);
-	}
+	render_background(buffer.cairo, image, output->config->mode,
+		buffer_width, buffer_height, bg_color);
 
 	// return wl_buffer for caller to use and destroy
 	struct wl_buffer *wl_buf = buffer.buffer;

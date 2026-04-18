@@ -31,7 +31,18 @@ struct background_image {
 enum background_mode parse_background_mode(const char *mode);
 /** On success, this returns true and fills *image. */
 bool load_background_image(const char *path, struct background_image *image);
-void render_background_image(cairo_t *cairo, cairo_surface_t *image,
-		enum background_mode mode, int buffer_width, int buffer_height);
+
+/** Render `image` (if provided) according to the given mode.
+ *
+ * This will produce a buffer in the color space indicated by the image's CICP,
+ * if present. `bg_color_srgb` is the sRGB background color and will be
+ * transformed to remain accurate if the output is rendered using the CICP.
+ *
+ * `buffer_width` and `buffer_height` are the target buffer dimensions
+ * (in physical pixels). Physical pixels are assumed square.
+ */
+void render_background(cairo_t *cairo, const struct background_image *image,
+		enum background_mode mode, int buffer_width, int buffer_height,
+		uint32_t bg_color_srgb);
 
 #endif
