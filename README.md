@@ -27,7 +27,7 @@ Install dependencies:
 * wayland
 * wayland-protocols \*
 * cairo
-* gdk-pixbuf2 (optional: image formats other than PNG)
+* glycin (optional: image formats other than PNG)
 * [scdoc](https://git.sr.ht/~sircmpwn/scdoc) (optional: man pages) \*
 * git (optional: version information) \*
 

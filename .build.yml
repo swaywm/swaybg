@@ -1,7 +1,7 @@
 image: alpine/edge
 packages:
   - cairo-dev
-  - gdk-pixbuf-dev
+  - glycin-loaders-dev
   - meson
   - scdoc
   - wayland-dev
