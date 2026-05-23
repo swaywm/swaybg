@@ -194,6 +194,7 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		enum background_mode mode, int buffer_width, int buffer_height) {
 	double width = cairo_image_surface_get_width(image);
 	double height = cairo_image_surface_get_height(image);
+	cairo_pattern_t *pattern = cairo_pattern_create_for_surface(image);
 
 	cairo_save(cairo);
 	switch (mode) {
@@ -201,7 +202,6 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		cairo_scale(cairo,
 				(double)buffer_width / width,
 				(double)buffer_height / height);
-		cairo_set_source_surface(cairo, image, 0, 0);
 		break;
 	case BACKGROUND_MODE_FILL: {
 		double window_ratio = (double)buffer_width / buffer_height;
@@ -210,13 +210,11 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		if (window_ratio > bg_ratio) {
 			double scale = (double)buffer_width / width;
 			cairo_scale(cairo, scale, scale);
-			cairo_set_source_surface(cairo, image,
-					0, (double)buffer_height / 2 / scale - height / 2);
+			cairo_translate(cairo, 0, (double)buffer_height / 2 / scale - height / 2);
 		} else {
 			double scale = (double)buffer_height / height;
 			cairo_scale(cairo, scale, scale);
-			cairo_set_source_surface(cairo, image,
-					(double)buffer_width / 2 / scale - width / 2, 0);
+			cairo_translate(cairo, (double)buffer_width / 2 / scale - width / 2, 0);
 		}
 		break;
 	}
@@ -227,26 +225,21 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		if (window_ratio > bg_ratio) {
 			double scale = (double)buffer_height / height;
 			cairo_scale(cairo, scale, scale);
-			cairo_set_source_surface(cairo, image,
-					(double)buffer_width / 2 / scale - width / 2, 0);
+			cairo_translate(cairo, (double)buffer_width / 2 / scale - width / 2, 0);
 		} else {
 			double scale = (double)buffer_width / width;
 			cairo_scale(cairo, scale, scale);
-			cairo_set_source_surface(cairo, image,
-					0, (double)buffer_height / 2 / scale - height / 2);
+			cairo_translate(cairo, 0, (double)buffer_height / 2 / scale - height / 2);
 		}
 		break;
 	}
 	case BACKGROUND_MODE_CENTER:
-		cairo_set_source_surface(cairo, image,
+		cairo_translate(cairo,
 				(double)buffer_width / 2 - width / 2,
 				(double)buffer_height / 2 - height / 2);
 		break;
 	case BACKGROUND_MODE_TILE: {
-		cairo_pattern_t *pattern = cairo_pattern_create_for_surface(image);
 		cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
-		cairo_set_source(cairo, pattern);
-		cairo_pattern_destroy(pattern);
 		break;
 	}
 	case BACKGROUND_MODE_SOLID_COLOR:
@@ -254,6 +247,8 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		assert(0);
 		break;
 	}
+	cairo_set_source(cairo, pattern);
+	cairo_pattern_destroy(pattern);
 	cairo_paint(cairo);
 	cairo_restore(cairo);
 }
