@@ -98,7 +98,8 @@ struct swaybg_output {
 
 // Create a wl_buffer with the specified dimensions and content
 static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
-		cairo_surface_t *surface, uint32_t buffer_width, uint32_t buffer_height) {
+		cairo_surface_t *surface, const cairo_matrix_t *matrix,
+		uint32_t buffer_width, uint32_t buffer_height) {
 	uint32_t bg_color = output->config->color ? output->config->color : 0x000000ff;
 
 	if (buffer_width == 1 && buffer_height == 1 &&
@@ -129,7 +130,7 @@ static struct wl_buffer *draw_buffer(const struct swaybg_output *output,
 	cairo_paint(cairo);
 
 	if (surface) {
-		render_background_image(cairo, surface,
+		render_background_image(cairo, surface, matrix,
 			output->config->mode, buffer_width, buffer_height);
 	}
 
@@ -161,7 +162,8 @@ static void get_buffer_size(const struct swaybg_output *output,
 	}
 }
 
-static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
+static void render_frame(struct swaybg_output *output, cairo_surface_t *surface,
+		const cairo_matrix_t *matrix) {
 	uint32_t buffer_width, buffer_height;
 	get_buffer_size(output, &buffer_width, &buffer_height);
 
@@ -169,8 +171,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 	struct wl_buffer *buf = NULL;
 	if (buffer_width != output->buffer_width ||
 			buffer_height != output->buffer_height) {
-		buf = draw_buffer(output, surface,
-			buffer_width, buffer_height);
+		buf = draw_buffer(output, surface, matrix, buffer_width, buffer_height);
 		if (!buf) {
 			return;
 		}
@@ -660,7 +661,8 @@ int main(int argc, char **argv) {
 				continue;
 			}
 
-			cairo_surface_t *surface = load_background_image(image->path);
+			cairo_matrix_t matrix;
+			cairo_surface_t *surface = load_background_image(image->path, &matrix);
 			if (!surface) {
 				swaybg_log(LOG_ERROR, "Failed to load image: %s", image->path);
 				continue;
@@ -669,7 +671,7 @@ int main(int argc, char **argv) {
 			wl_list_for_each(output, &state.outputs, link) {
 				if (output->dirty && output->config->image == image) {
 					output->dirty = false;
-					render_frame(output, surface);
+					render_frame(output, surface, &matrix);
 				}
 			}
 
@@ -681,7 +683,7 @@ int main(int argc, char **argv) {
 		wl_list_for_each(output, &state.outputs, link) {
 			if (output->dirty) {
 				output->dirty = false;
-				render_frame(output, NULL);
+				render_frame(output, NULL, NULL);
 			}
 		}
 	}

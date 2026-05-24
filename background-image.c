@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math.h>
 #include <stdlib.h>
 
 #include "background-image.h"
@@ -6,6 +7,10 @@
 
 #if HAVE_KEULIM
 #include <keulim.h>
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
 #endif
 
 enum background_mode parse_background_mode(const char *mode) {
@@ -85,7 +90,7 @@ static cairo_surface_t *create_surface_from_data(const uint8_t *src_pixels,
 	return surface;
 }
 
-static cairo_surface_t *load_image_with_keulim(const char *path) {
+static cairo_surface_t *load_image_with_keulim(const char *path, cairo_matrix_t *out_matrix) {
 	FILE *f = fopen(path, "r");
 	if (f == NULL) {
 		swaybg_log(LOG_ERROR, "Failed to open file");
@@ -151,6 +156,28 @@ static cairo_surface_t *load_image_with_keulim(const char *path) {
 		goto error_buffer;
 	}
 
+	cairo_matrix_init_identity(out_matrix);
+	if (info->transform & KLM_TRANSFORM_ROTATE90) {
+		cairo_matrix_translate(out_matrix, (double)info->height / 2, (double)info->width / 2);
+	} else {
+		cairo_matrix_translate(out_matrix, (double)info->width / 2, (double)info->height / 2);
+	}
+	if (info->transform & KLM_TRANSFORM_FLIP) {
+		cairo_matrix_scale(out_matrix, -1, 1);
+	}
+	switch (info->transform & ~KLM_TRANSFORM_FLIP) {
+	case KLM_TRANSFORM_ROTATE90:
+		cairo_matrix_rotate(out_matrix, M_PI / 2);
+		break;
+	case KLM_TRANSFORM_ROTATE180:
+		cairo_matrix_rotate(out_matrix, M_PI);
+		break;
+	case KLM_TRANSFORM_ROTATE270:
+		cairo_matrix_rotate(out_matrix, 3 * M_PI / 2);
+		break;
+	}
+	cairo_matrix_translate(out_matrix, -(double)info->width / 2, -(double)info->height / 2);
+
 	free(buffer);
 	klm_decoder_destroy(dec);
 	fclose(f);
@@ -167,10 +194,12 @@ error_file:
 
 #endif
 
-cairo_surface_t *load_background_image(const char *path) {
+cairo_surface_t *load_background_image(const char *path, cairo_matrix_t *out_matrix) {
+	cairo_matrix_init_identity(out_matrix);
+
 	cairo_surface_t *image;
 #if HAVE_KEULIM
-	image = load_image_with_keulim(path);
+	image = load_image_with_keulim(path, out_matrix);
 #else
 	image = cairo_image_surface_create_from_png(path);
 #endif
@@ -191,9 +220,12 @@ cairo_surface_t *load_background_image(const char *path) {
 }
 
 void render_background_image(cairo_t *cairo, cairo_surface_t *image,
-		enum background_mode mode, int buffer_width, int buffer_height) {
+		const cairo_matrix_t *matrix, enum background_mode mode,
+		int buffer_width, int buffer_height) {
 	double width = cairo_image_surface_get_width(image);
 	double height = cairo_image_surface_get_height(image);
+	cairo_matrix_transform_point(matrix, &width, &height);
+
 	cairo_pattern_t *pattern = cairo_pattern_create_for_surface(image);
 
 	cairo_save(cairo);
@@ -247,6 +279,12 @@ void render_background_image(cairo_t *cairo, cairo_surface_t *image,
 		assert(0);
 		break;
 	}
+
+	cairo_matrix_t m;
+	cairo_get_matrix(cairo, &m);
+	cairo_matrix_multiply(&m, matrix, &m);
+	cairo_set_matrix(cairo, &m);
+
 	cairo_set_source(cairo, pattern);
 	cairo_pattern_destroy(pattern);
 	cairo_paint(cairo);
