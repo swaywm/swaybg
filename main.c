@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <assert.h>
 #include <ctype.h>
 #include <getopt.h>
@@ -479,6 +480,7 @@ static void parse_command_line(int argc, char **argv,
 		{"color", required_argument, NULL, 'c'},
 		{"help", no_argument, NULL, 'h'},
 		{"image", required_argument, NULL, 'i'},
+		{"random", required_argument, NULL, 'r'},
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
 		{"version", no_argument, NULL, 'v'},
@@ -491,6 +493,7 @@ static void parse_command_line(int argc, char **argv,
 		"  -c, --color RRGGBB     Set the background color.\n"
 		"  -h, --help             Show help message and quit.\n"
 		"  -i, --image <path>     Set the image to display.\n"
+		"  -r, --random <path>    Set a random image from a directory to display.\n"
 		"  -m, --mode <mode>      Set the mode to use for the image.\n"
 		"  -o, --output <name>    Set the output to operate on or * for all.\n"
 		"  -v, --version          Show the version number and quit.\n"
@@ -506,7 +509,7 @@ static void parse_command_line(int argc, char **argv,
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:v", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:r:m:o:v", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -521,6 +524,39 @@ static void parse_command_line(int argc, char **argv,
 		case 'i':  // image
 			config->image_path = optarg;
 			break;
+		case 'r': // random
+    		srand(time(NULL));
+		    DIR *image_dir = opendir(optarg);
+		    if (image_dir == NULL) {
+                swaybg_log(LOG_ERROR, "Unable to open directory: %s", optarg);
+                break;
+            }
+            struct dirent *dir;
+		    char **files = NULL;
+		    int fc = 0;
+		    while ((dir = readdir(image_dir)) != NULL) {
+    		    if (strcmp(dir->d_name, ".") == 0 ||
+    		        strcmp(dir->d_name, "..") == 0) {
+        		    continue;
+    		    }
+    		    if (dir->d_type == DT_REG) {
+        		    files = realloc(files, (fc + 1) * sizeof(char *));
+        		    if (files == NULL) {
+            		    swaybg_log(LOG_ERROR, "Memory allocation for images array failed");
+            		    break;
+        		    }
+        		    files[fc] = strdup(dir->d_name);
+        		    fc++;
+    		    }
+		    }
+		    closedir(image_dir);
+		    char *image_name = files[rand() % fc];
+		    int len = snprintf(NULL, 0, "%s/%s", optarg, image_name);
+		    char *image_path = malloc(len + 1);
+		    snprintf(image_path, len + 1, "%s/%s", optarg, image_name);
+            config->image_path = image_path;
+		    free(dir); free(files);
+		    break;
 		case 'm':  // mode
 			config->mode = parse_background_mode(optarg);
 			if (config->mode == BACKGROUND_MODE_INVALID) {

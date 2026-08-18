@@ -13,7 +13,7 @@ project(
 
 cc = meson.get_compiler('c')
 
-add_project_arguments('-D_POSIX_C_SOURCE=200809L', language: 'c')
+add_project_arguments('-D_POSIX_C_SOURCE=200809L', '-D_DEFAULT_SOURCE', language: 'c')
 
 add_project_arguments(cc.get_supported_arguments([
 	'-Wno-unused-parameter',
