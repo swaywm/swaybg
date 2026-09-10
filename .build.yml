@@ -1,14 +1,19 @@
 image: alpine/edge
 packages:
   - cairo-dev
-  - gdk-pixbuf-dev
   - meson
   - scdoc
   - wayland-dev
   - wayland-protocols
 sources:
   - https://github.com/swaywm/swaybg
+  - https://gitlab.freedesktop.org/emersion/keulim.git
 tasks:
+  - keulim: |
+      cd keulim
+      meson setup build/
+      ninja -C build/
+      sudo ninja -C build/ install
   - setup: |
       cd swaybg
       meson build/ --fatal-meson-warnings -Dauto_features=enabled
